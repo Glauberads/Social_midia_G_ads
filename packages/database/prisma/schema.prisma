@@ -33,42 +33,42 @@ enum TenantStatus {
 }
 
 model UserProfile {
-  id        String       @id @db.Uuid
-  email     String       @unique
+  id        String   @id @db.Uuid
+  email     String   @unique
   fullName  String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  memberships Membership[]
+  memberships     Membership[]
   sentInvitations Invitation[] @relation("Inviter")
 }
 
 model Tenant {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String
-  slug        String       @unique
-  status      TenantStatus @default(ACTIVE)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String       @unique
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  deletedAt DateTime?
 
   memberships Membership[]
   invitations Invitation[]
 }
 
 model Membership {
-  id        String           @id @default(uuid()) @db.Uuid
-  role      Role             @default(MEMBER)
-  status    MembershipStatus @default(ACTIVE)
-  
-  userId    String           @db.Uuid
-  tenantId  String           @db.Uuid
+  id     String           @id @default(uuid()) @db.Uuid
+  role   Role             @default(MEMBER)
+  status MembershipStatus @default(ACTIVE)
+
+  userId   String @db.Uuid
+  tenantId String @db.Uuid
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
   @@unique([userId, tenantId])
   @@index([tenantId, status])
@@ -76,36 +76,34 @@ model Membership {
 }
 
 model Invitation {
-  id          String           @id @default(uuid()) @db.Uuid
-  email       String
-  role        Role             @default(MEMBER)
-  status      InvitationStatus @default(PENDING)
-  tokenHash   String           @unique
-  
-  tenantId    String           @db.Uuid
-  invitedById String           @db.Uuid
+  id        String           @id @default(uuid()) @db.Uuid
+  email     String
+  role      Role             @default(MEMBER)
+  status    InvitationStatus @default(PENDING)
+  tokenHash String           @unique
 
-  createdAt   DateTime @default(now())
-  expiresAt   DateTime
+  tenantId    String @db.Uuid
+  invitedById String @db.Uuid
 
-  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  invitedBy   UserProfile @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
 
-  // Indice parcial para lower(email) e tenantId WHERE status='PENDING' e chave estrageira para auth.users serao adicionados no migration.sql bruto
+  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invitedBy UserProfile @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
 }
 
 model AuditLog {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String  @id @default(uuid()) @db.Uuid
   action        String
   entity        String
   entityId      String
-  actorId       String?  @db.Uuid
+  actorId       String? @db.Uuid
   metadata      Json?
-  tenantId      String?  @db.Uuid
+  tenantId      String? @db.Uuid
   requestId     String?
   correlationId String?
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([tenantId, createdAt])
   @@index([actorId, createdAt])
