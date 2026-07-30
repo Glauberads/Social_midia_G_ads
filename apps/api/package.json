@@ -5,7 +5,9 @@
         "build": "tsc",
         "lint": "eslint src/**/*.ts",
         "typecheck": "tsc --noEmit",
-        "test": "jest"
+        "test": "jest",
+        "test:integration:tenants": "node test/tenants-integration.script.js",
+        "test:watch": "jest --watch"
     },
     "dependencies": {
         "@nestjs/common": "^10.4.22",

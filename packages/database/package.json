@@ -9,7 +9,7 @@
         "lint": "echo 'Database linted'",
         "typecheck": "tsc --noEmit",
         "test": "jest",
-        "test:integration": "node tests/integration/test.js"
+        "test:integration": "node tests/integration/integration.script.js"
     },
     "dependencies": {
         "@prisma/client": "^5.0.0"

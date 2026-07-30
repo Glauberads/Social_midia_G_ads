@@ -69,7 +69,7 @@ async function runTests() {
     console.log("Created Invitation");
 
     console.log("\n উপকূল 11: AUDITLOG ---");
-    const auditId = '88888888-8888-8888-8888-888888888888';
+    const auditId = crypto.randomUUID();
     await client.query(`INSERT INTO "AuditLog" (id, action, entity, "entityId") VALUES ($1, 'CREATE', 'User', $2)`, [auditId, uuid1]);
     console.log("Created AuditLog");
 
