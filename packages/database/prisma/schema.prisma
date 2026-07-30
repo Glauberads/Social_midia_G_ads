@@ -23,77 +23,91 @@ enum InvitationStatus {
   PENDING
   ACCEPTED
   REVOKED
+  EXPIRED
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
 }
 
 model UserProfile {
-  id        String       @id // Espelha auth.users.id do Supabase
+  id        String       @id @db.Uuid
   email     String       @unique
   fullName  String?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
   memberships Membership[]
+  sentInvitations Invitation[] @relation("Inviter")
 }
 
 model Tenant {
-  id          String       @id @default(uuid())
+  id          String       @id @default(uuid()) @db.Uuid
   name        String
   slug        String       @unique
+  status      TenantStatus @default(ACTIVE)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
 
   memberships Membership[]
   invitations Invitation[]
-  auditLogs   AuditLog[]
 }
 
 model Membership {
-  id        String           @id @default(uuid())
+  id        String           @id @default(uuid()) @db.Uuid
   role      Role             @default(MEMBER)
   status    MembershipStatus @default(ACTIVE)
   
-  userId    String
-  tenantId  String
+  userId    String           @db.Uuid
+  tenantId  String           @db.Uuid
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
   @@unique([userId, tenantId])
+  @@index([tenantId, status])
+  @@index([userId, status])
 }
 
 model Invitation {
-  id        String           @id @default(uuid())
-  email     String
-  role      Role             @default(MEMBER)
-  status    InvitationStatus @default(PENDING)
+  id          String           @id @default(uuid()) @db.Uuid
+  email       String
+  role        Role             @default(MEMBER)
+  status      InvitationStatus @default(PENDING)
+  tokenHash   String           @unique
   
-  tenantId  String
-  invitedBy String // Id do user que enviou
+  tenantId    String           @db.Uuid
+  invitedById String           @db.Uuid
 
-  createdAt DateTime @default(now())
-  expiresAt DateTime
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
 
-  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invitedBy   UserProfile @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
 
-  @@unique([email, tenantId])
+  // Indice parcial para lower(email) e tenantId WHERE status='PENDING' e chave estrageira para auth.users serao adicionados no migration.sql bruto
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  action    String
-  entity    String
-  entityId  String
-  actorId   String
-  metadata  Json?
-  tenantId  String
+  id            String   @id @default(uuid()) @db.Uuid
+  action        String
+  entity        String
+  entityId      String
+  actorId       String?  @db.Uuid
+  metadata      Json?
+  tenantId      String?  @db.Uuid
+  requestId     String?
+  correlationId String?
 
-  createdAt DateTime @default(now())
+  createdAt     DateTime @default(now())
 
-  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
-  @@index([actorId])
+  @@index([tenantId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
 }
