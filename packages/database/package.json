@@ -1,0 +1,23 @@
+{
+    "name":  "@projeto/database",
+    "version":  "1.0.0",
+    "main":  "index.ts",
+    "scripts":  {
+                    "prisma:generate":  "prisma generate",
+                    "prisma:validate":  "prisma validate",
+                    "build":  "echo \u0027Database built\u0027",
+                    "lint":  "echo \u0027Database linted\u0027",
+                    "typecheck":  "tsc --noEmit",
+                    "test":  "jest"
+                },
+    "dependencies":  {
+                         "@prisma/client":  "^5.0.0"
+                     },
+    "devDependencies":  {
+                            "prisma":  "^5.0.0",
+                            "typescript":  "^5.0.0",
+                            "jest":  "^29.0.0",
+                            "@types/jest":  "^29.0.0",
+                            "ts-jest":  "^29.0.0"
+                        }
+}
