@@ -1,192 +1,203 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabaseClient';
 
-interface UserProfile {
-  id: string;
-  email: string;
-}
-
-interface Tenant {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  membership: { role: string; status: string };
-}
-
 export default function DashboardPage() {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const router = useRouter();
+  const [profile, setProfile] = useState<{ id: string; email: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [token, setToken] = useState<string>('');
 
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [tenantName, setTenantName] = useState('');
-  const [tenantSlug, setTenantSlug] = useState('');
-  const [tenantError, setTenantError] = useState('');
-  const [creating, setCreating] = useState(false);
+  // Tenants and selection
+  const [tenants, setTenants] = useState<Array<{ id: string; name: string; slug: string }>>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
+  const [tenantContext, setTenantContext] = useState<{ tenantId: string; role: string; membershipId: string } | null>(null);
+  const [newTenantName, setNewTenantName] = useState('');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      if (!s) {
-        window.location.href = '/login';
-      } else {
-        setToken(s.access_token);
-        fetchProfile(s.access_token);
-        fetchTenants(s.access_token);
-      }
-    });
+    async function loadData() {
+      const { data, error } = await supabase.auth.getSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event) => {
-        if (event === 'SIGNED_OUT') {
-          window.location.href = '/login';
-        }
-      }
-    );
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  const fetchProfile = async (accessToken: string) => {
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
-      const res = await fetch(`${apiUrl}/auth/me`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      if (!res.ok) {
-        if (res.status === 401) {
-          setError('Sessão expirada ou inválida. Faça login novamente.');
-          supabase.auth.signOut();
-        } else if (res.status === 409) {
-          setError('Perfil ainda não sincronizado (AUTH_PROFILE_NOT_PROVISIONED). Tente novamente em instantes.');
-        } else {
-          setError(`Erro na API: ${res.status}`);
-        }
-        setLoading(false);
+      if (error || !data.session) {
+        router.push('/login');
         return;
       }
-      const data = await res.json();
-      setProfile(data);
-      setLoading(false);
-    } catch (e) {
-      setError(`Falha ao conectar com API: ${(e as Error).message}`);
-      setLoading(false);
-    }
-  };
 
-  const fetchTenants = async (accessToken: string) => {
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
-      const res = await fetch(`${apiUrl}/tenants`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTenants(data);
-      }
-    } catch (e) {
-      console.error('Falha ao buscar tenants', e);
-    }
-  };
+      const token = data.session.access_token;
 
-  const handleCreateTenant = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setTenantError('');
-    setCreating(true);
-
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
-      const res = await fetch(`${apiUrl}/tenants`, {
-        method: 'POST',
+      // Fetch user profile
+      const resProfile = await fetch('http://localhost:3001/api/auth/me', {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ name: tenantName, slug: tenantSlug })
+          'Authorization': `Bearer ${token}`
+        }
       });
 
-      if (res.status === 409) {
-        setTenantError('Este slug já está em uso ou é reservado.');
-      } else if (!res.ok) {
-        const data = await res.json();
-        setTenantError(data.message?.join(', ') || 'Erro de validação');
-      } else {
-        setTenantName('');
-        setTenantSlug('');
-        fetchTenants(token);
+      if (!resProfile.ok) {
+        router.push('/login');
+        return;
       }
-    } catch (e) {
-      setTenantError(`Erro de conexão: ${(e as Error).message}`);
-    } finally {
-      setCreating(false);
+
+      setProfile(await resProfile.json());
+
+      // Fetch tenants
+      const resTenants = await fetch('http://localhost:3001/api/tenants', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (resTenants.ok) {
+        const list = await resTenants.json();
+        setTenants(list);
+
+        // Auto-select preferred or first
+        const savedTenantId = localStorage.getItem('glauberads_preferred_tenant');
+        if (savedTenantId && list.find((t: { id: string }) => t.id === savedTenantId)) {
+          setSelectedTenantId(savedTenantId);
+        } else if (list.length > 0) {
+          setSelectedTenantId(list[0].id);
+        }
+      }
+
+      setLoading(false);
     }
-  };
 
-  const handleLogout = async () => {
+    loadData();
+  }, [router]);
+
+  // Load Context when tenant changes
+  useEffect(() => {
+    async function loadContext() {
+      if (!selectedTenantId) {
+        setTenantContext(null);
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+
+      localStorage.setItem('glauberads_preferred_tenant', selectedTenantId);
+
+      const resContext = await fetch('http://localhost:3001/api/tenant-context', {
+        headers: {
+          'Authorization': `Bearer ${data.session.access_token}`,
+          'x-tenant-id': selectedTenantId
+        }
+      });
+
+      if (resContext.ok) {
+        setTenantContext(await resContext.json());
+      } else {
+        setTenantContext(null);
+      }
+    }
+
+    loadContext();
+  }, [selectedTenantId]);
+
+  async function handleLogout() {
     await supabase.auth.signOut();
-    window.location.href = '/login';
-  };
+    router.push('/login');
+  }
 
-  if (loading) return <div style={{ padding: '2rem' }}>Carregando dashboard...</div>;
+  async function handleCreateTenant() {
+    if (!newTenantName) return;
+
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) return;
+
+    const slug = newTenantName.toLowerCase().replace(/\s+/g, '-');
+
+    const res = await fetch('http://localhost:3001/api/tenants', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${data.session.access_token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ name: newTenantName, slug })
+    });
+
+    if (res.ok) {
+      const tenant = await res.json();
+      setTenants([...tenants, tenant]);
+      setNewTenantName('');
+      setSelectedTenantId(tenant.id); // Auto-select new tenant
+    } else {
+      if (res.status === 409) {
+        alert('Este nome/slug já está em uso.');
+      } else {
+        alert('Erro ao criar workspace.');
+      }
+    }
+  }
+
+  if (loading) return <div className="p-8">Carregando...</div>;
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <h1>Dashboard Privado</h1>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-
-      {profile && (
-        <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid #ccc' }}>
-          <h2>Bem-vindo!</h2>
-          <p><strong>ID:</strong> {profile.id}</p>
-          <p><strong>E-mail:</strong> {profile.email}</p>
-        </div>
-      )}
-
-      <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid #ccc' }}>
-        <h2>Criar workspace</h2>
-        {tenantError && <p style={{ color: 'red' }}>{tenantError}</p>}
-        <form onSubmit={handleCreateTenant} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '300px' }}>
-          <input
-            type="text"
-            placeholder="Nome do workspace"
-            value={tenantName}
-            onChange={e => setTenantName(e.target.value)}
-            required
-          />
-          <input
-            type="text"
-            placeholder="slug (ex: meu-workspace)"
-            value={tenantSlug}
-            onChange={e => setTenantSlug(e.target.value)}
-            required
-          />
-          <button type="submit" disabled={creating}>
-            {creating ? 'Criando...' : 'Criar'}
-          </button>
-        </form>
+    <div className="p-8 space-y-8 bg-gray-50 min-h-screen text-gray-800">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <button onClick={handleLogout} className="text-sm bg-red-100 text-red-600 px-4 py-2 rounded">
+          Sair
+        </button>
       </div>
 
-      <div style={{ marginTop: '2rem' }}>
-        <h2>Meus Workspaces</h2>
-        {tenants.length === 0 ? (
-          <p>Você não participa de nenhum workspace.</p>
+      <div className="bg-white p-6 rounded shadow max-w-xl">
+        <h2 className="text-xl font-semibold mb-4">Perfil Autenticado</h2>
+        <p><strong>ID:</strong> {profile?.id}</p>
+        <p><strong>Email:</strong> {profile?.email}</p>
+      </div>
+
+      <div className="bg-white p-6 rounded shadow max-w-xl space-y-4">
+        <h2 className="text-xl font-semibold">Meus Workspaces</h2>
+
+        {tenants.length > 0 ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Selecionar Workspace Ativo:</label>
+            <select
+              value={selectedTenantId || ''}
+              onChange={e => setSelectedTenantId(e.target.value)}
+              className="border p-2 rounded w-full"
+            >
+              <option value="" disabled>Selecione...</option>
+              {tenants.map(t => (
+                <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>
+              ))}
+            </select>
+          </div>
         ) : (
-          <ul>
-            {tenants.map(t => (
-              <li key={t.id}>
-                <strong>{t.name}</strong> ({t.slug}) - Papel: {t.membership.role} - Status: {t.status}
-              </li>
-            ))}
-          </ul>
+          <p className="text-gray-500">Você ainda não tem nenhum workspace.</p>
         )}
-      </div>
 
-      <button onClick={handleLogout} style={{ marginTop: '2rem' }}>Sair (Logout)</button>
+        {tenantContext && (
+          <div className="mt-4 p-4 bg-green-50 rounded border border-green-200">
+            <h3 className="font-semibold text-green-800 mb-2">Contexto Tenant Ativo (Validado via API)</h3>
+            <p className="text-sm text-green-700"><strong>Tenant ID:</strong> {tenantContext.tenantId}</p>
+            <p className="text-sm text-green-700"><strong>Minha Role:</strong> {tenantContext.role}</p>
+            <p className="text-sm text-green-700"><strong>Membership ID:</strong> {tenantContext.membershipId}</p>
+          </div>
+        )}
+
+        <div className="pt-4 border-t">
+          <h3 className="text-lg font-medium mb-2">Criar Novo Workspace</h3>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Nome do Workspace"
+              value={newTenantName}
+              onChange={e => setNewTenantName(e.target.value)}
+              className="border p-2 rounded flex-1"
+            />
+            <button
+              onClick={handleCreateTenant}
+              className="bg-blue-600 text-white px-4 py-2 rounded"
+            >
+              Criar
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

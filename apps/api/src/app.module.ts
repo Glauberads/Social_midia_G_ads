@@ -5,6 +5,9 @@ import { TenantsModule } from './modules/tenants/tenants.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { AppController } from './app.controller';
 
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { TenantContextInterceptor } from './modules/tenants/presentation/tenant-context.interceptor';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -16,6 +19,11 @@ import { AppController } from './app.controller';
     TenantsModule,
   ],
   controllers: [AppController],
-  providers: [],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TenantContextInterceptor,
+    }
+  ],
 })
 export class AppModule {}

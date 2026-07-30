@@ -10,3 +10,11 @@ export interface TenantResponse {
   };
   createdAt: Date;
 }
+
+export interface TenantScope {
+  readonly userId: string;
+  readonly tenantId: string;
+  readonly membershipId: string;
+  readonly role: string;
+  readonly requestId: string;
+}

@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TenantsController } from './presentation/tenants.controller';
+import { TenantContextController } from './presentation/tenant-context.controller';
 import { CreateTenantUseCase } from './application/use-cases/create-tenant.use-case';
 import { ListUserTenantsUseCase } from './application/use-cases/list-user-tenants.use-case';
+import { TenantContextService } from './application/tenant-context.service';
 import { TENANT_REPOSITORY } from './application/ports/tenant.repository';
 import { PrismaTenantRepository } from './infrastructure/prisma-tenant.repository';
 import { MEMBERSHIP_REPOSITORY } from './application/ports/membership.repository';
@@ -16,10 +18,11 @@ import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [PrismaModule, AuthModule],
-  controllers: [TenantsController],
+  controllers: [TenantsController, TenantContextController],
   providers: [
     CreateTenantUseCase,
     ListUserTenantsUseCase,
+    TenantContextService,
     {
       provide: TENANT_REPOSITORY,
       useClass: PrismaTenantRepository,
@@ -37,5 +40,6 @@ import { AuthModule } from '../auth/auth.module';
       useClass: PrismaUnitOfWork,
     },
   ],
+  exports: [TenantContextService],
 })
 export class TenantsModule {}

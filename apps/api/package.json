@@ -7,6 +7,7 @@
         "typecheck": "tsc --noEmit",
         "test": "jest",
         "test:integration:tenants": "node test/tenants-integration.script.js",
+        "test:integration:tenant-context": "node test/tenant-context-integration.script.js",
         "test:watch": "jest --watch"
     },
     "dependencies": {
