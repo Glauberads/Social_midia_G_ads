@@ -55,7 +55,7 @@ describe('TenantResolverGuard', () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true);
     request.headers['x-tenant-id'] = ['uuid-1', 'uuid-2'];
     await expect(guard.canActivate(context)).rejects.toThrow(BadRequestException);
-    await expect(guard.canActivate(context)).rejects.toThrow('TENANT_CONTEXT_REQUIRED');
+    await expect(guard.canActivate(context)).rejects.toThrow('INVALID_TENANT_ID');
   });
 
   const validUuid = '123e4567-e89b-12d3-a456-426614174000';

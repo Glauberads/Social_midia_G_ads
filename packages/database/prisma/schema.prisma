@@ -40,8 +40,9 @@ model UserProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships     Membership[]
-  sentInvitations Invitation[] @relation("Inviter")
+  memberships       Membership[]
+  sentInvitations   Invitation[] @relation("Inviter")
+  acceptedInvitations Invitation[] @relation("InvitationAcceptedBy")
 }
 
 model Tenant {
@@ -85,12 +86,17 @@ model Invitation {
 
   tenantId    String @db.Uuid
   invitedById String @db.Uuid
+  acceptedById String? @db.Uuid
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   expiresAt DateTime
+  acceptedAt DateTime?
+  revokedAt DateTime?
 
   tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   invitedBy UserProfile @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  acceptedBy UserProfile? @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
 }
 
 model AuditLog {

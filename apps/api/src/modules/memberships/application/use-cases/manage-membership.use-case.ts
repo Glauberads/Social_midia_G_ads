@@ -3,10 +3,8 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { PrismaMembershipRepository } from '../../infrastructure/prisma-membership.repository';
 import { TenantScope } from '../../../tenants/domain/tenant.types';
 import { Role, MembershipStatus, Prisma } from '@projeto/database';
-import { randomUUID } from 'crypto';
 import {
   MembershipNotFoundException,
-  RoleChangeForbiddenException,
   LastOwnerProtectedException,
   CannotManageOwnerException,
   CannotManageAdminException,

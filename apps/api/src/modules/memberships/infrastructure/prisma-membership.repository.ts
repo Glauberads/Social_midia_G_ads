@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantScope } from '../../tenants/domain/tenant.types';
-import { Role, MembershipStatus, Prisma } from '@projeto/database';
+import { Prisma } from '@projeto/database';
 
 @Injectable()
 export class PrismaMembershipRepository {

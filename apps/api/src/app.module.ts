@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
+import { InvitationsModule } from './modules/invitations/invitations.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
+import { MembershipsModule } from './modules/memberships/memberships.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { AppController } from './app.controller';
 
@@ -17,6 +19,8 @@ import { TenantContextInterceptor } from './modules/tenants/presentation/tenant-
     PrismaModule,
     AuthModule,
     TenantsModule,
+    MembershipsModule,
+    InvitationsModule,
   ],
   controllers: [AppController],
   providers: [

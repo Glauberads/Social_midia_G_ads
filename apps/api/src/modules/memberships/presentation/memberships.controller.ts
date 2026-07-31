@@ -3,7 +3,6 @@ import { TenantScoped } from '../../auth/decorators/tenant-scoped.decorator';
 import { RequireRoles } from '../../auth/decorators/require-roles.decorator';
 import { CurrentTenant } from '../../auth/decorators/current-tenant.decorator';
 import { TenantScope } from '../../tenants/domain/tenant.types';
-import { Role } from '@projeto/database';
 import { RbacGuard } from '../../auth/guards/rbac.guard';
 import { PrismaMembershipRepository } from '../infrastructure/prisma-membership.repository';
 import { ManageMembershipUseCase } from '../application/use-cases/manage-membership.use-case';
