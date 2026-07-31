@@ -14,6 +14,7 @@ export default function DashboardPage() {
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   const [tenantContext, setTenantContext] = useState<{ tenantId: string; role: string; membershipId: string } | null>(null);
   const [newTenantName, setNewTenantName] = useState('');
+  const [memberships, setMemberships] = useState<any[]>([]);
 
   useEffect(() => {
     async function loadData() {
@@ -87,9 +88,25 @@ export default function DashboardPage() {
       });
 
       if (resContext.ok) {
-        setTenantContext(await resContext.json());
+        const ctx = await resContext.json();
+        setTenantContext(ctx);
+
+        if (ctx.role === 'OWNER' || ctx.role === 'ADMIN') {
+          const resMemberships = await fetch('http://localhost:3001/api/memberships', {
+            headers: {
+              'Authorization': `Bearer ${data.session.access_token}`,
+              'x-tenant-id': selectedTenantId
+            }
+          });
+          if (resMemberships.ok) {
+            setMemberships(await resMemberships.json());
+          }
+        } else {
+          setMemberships([]);
+        }
       } else {
         setTenantContext(null);
+        setMemberships([]);
       }
     }
 
@@ -132,6 +149,74 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadMemberships() {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session || !selectedTenantId) return;
+    const res = await fetch('http://localhost:3001/api/memberships', {
+      headers: {
+        'Authorization': `Bearer ${data.session.access_token}`,
+        'x-tenant-id': selectedTenantId
+      }
+    });
+    if (res.ok) setMemberships(await res.json());
+  }
+
+  async function handleChangeRole(membershipId: string, role: string) {
+    const { data } = await supabase.auth.getSession();
+    const res = await fetch(`http://localhost:3001/api/memberships/${membershipId}/role`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${data.session?.access_token}`,
+        'x-tenant-id': selectedTenantId!,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ role })
+    });
+    if (res.ok) {
+      alert('Role alterada.');
+      loadMemberships();
+    } else {
+      alert('Erro ao alterar role.');
+    }
+  }
+
+  async function handleChangeStatus(membershipId: string, status: string) {
+    const { data } = await supabase.auth.getSession();
+    const res = await fetch(`http://localhost:3001/api/memberships/${membershipId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${data.session?.access_token}`,
+        'x-tenant-id': selectedTenantId!,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ status })
+    });
+    if (res.ok) {
+      alert('Status alterado.');
+      loadMemberships();
+    } else {
+      alert('Erro ao alterar status.');
+    }
+  }
+
+  async function handleRemove(membershipId: string) {
+    if (!confirm('Deseja realmente remover?')) return;
+    const { data } = await supabase.auth.getSession();
+    const res = await fetch(`http://localhost:3001/api/memberships/${membershipId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${data.session?.access_token}`,
+        'x-tenant-id': selectedTenantId!
+      }
+    });
+    if (res.ok) {
+      alert('Membro removido.');
+      loadMemberships();
+    } else {
+      alert('Erro ao remover membro.');
+    }
+  }
+
   if (loading) return <div className="p-8">Carregando...</div>;
 
   return (
@@ -171,11 +256,89 @@ export default function DashboardPage() {
         )}
 
         {tenantContext && (
-          <div className="mt-4 p-4 bg-green-50 rounded border border-green-200">
-            <h3 className="font-semibold text-green-800 mb-2">Contexto Tenant Ativo (Validado via API)</h3>
-            <p className="text-sm text-green-700"><strong>Tenant ID:</strong> {tenantContext.tenantId}</p>
-            <p className="text-sm text-green-700"><strong>Minha Role:</strong> {tenantContext.role}</p>
-            <p className="text-sm text-green-700"><strong>Membership ID:</strong> {tenantContext.membershipId}</p>
+          <div className="flex-1 p-10">
+            <div className="max-w-4xl mx-auto">
+              <div className="flex justify-between items-center mb-8">
+                <h1 className="text-3xl font-bold text-gray-800 tracking-tight">Dashboard</h1>
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                    Tenant ID: {tenantContext.tenantId.substring(0, 8)}...
+                  </span>
+                  <span className="text-sm font-medium text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+                    Role: {tenantContext.role}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center mt-8">
+                <h2 className="text-xl font-semibold text-gray-800 mb-2">Bem-vindo(a) ao seu Workspace</h2>
+                <p className="text-gray-500">
+                  O isolamento de dados via TenantContext e AsyncLocalStorage está ativo e validado sob alta concorrência.
+                </p>
+              </div>
+
+              <div className="mt-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                  <h3 className="text-lg font-semibold text-gray-800">Membros da Equipe</h3>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
+                    (Gestão RBAC Integrada)
+                  </span>
+                </div>
+                <div className="p-6">
+                  {memberships.length > 0 ? (
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="py-2">Email</th>
+                          <th className="py-2">Role</th>
+                          <th className="py-2">Status</th>
+                          <th className="py-2">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {memberships.map((m: any) => (
+                          <tr key={m.id} className="border-b">
+                            <td className="py-2">{m.email}</td>
+                            <td className="py-2">
+                              <select 
+                                value={m.role} 
+                                onChange={(e) => handleChangeRole(m.id, e.target.value)}
+                                disabled={tenantContext.role === 'MEMBER' || tenantContext.role === 'VIEWER'}
+                                className="border rounded p-1"
+                              >
+                                <option value="OWNER">OWNER</option>
+                                <option value="ADMIN">ADMIN</option>
+                                <option value="MEMBER">MEMBER</option>
+                                <option value="VIEWER">VIEWER</option>
+                              </select>
+                            </td>
+                            <td className="py-2">
+                              {m.status}
+                            </td>
+                            <td className="py-2 space-x-2">
+                              {(tenantContext.role === 'OWNER' || tenantContext.role === 'ADMIN') && (
+                                <>
+                                  {m.status === 'ACTIVE' ? (
+                                    <button onClick={() => handleChangeStatus(m.id, 'SUSPENDED')} className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">Suspender</button>
+                                  ) : (
+                                    <button onClick={() => handleChangeStatus(m.id, 'ACTIVE')} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Reativar</button>
+                                  )}
+                                  <button onClick={() => handleRemove(m.id)} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Remover</button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="text-sm text-gray-500 text-center">
+                      Você não tem permissão para gerenciar memberships, ou não há membros.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

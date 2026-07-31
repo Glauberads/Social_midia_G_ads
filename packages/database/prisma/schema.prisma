@@ -17,6 +17,7 @@ enum Role {
 enum MembershipStatus {
   ACTIVE
   SUSPENDED
+  REMOVED
 }
 
 enum InvitationStatus {
