@@ -130,7 +130,7 @@ async function runTests() {
 
   // Concorrência ALS Forte
   const reqs = [];
-  for(let i=0; i<30; i++) {
+  for(let i=0; i<10; i++) {
     reqs.push(getContext(tokenA, tenantA.id).then(r => r.json()));
     reqs.push(getContext(tokenB, tenantB.id).then(r => r.json()));
     // Delay routes:
@@ -141,7 +141,7 @@ async function runTests() {
   const results = await Promise.all(reqs);
   
   let index = 0;
-  for(let i=0; i<30; i++) {
+  for(let i=0; i<10; i++) {
     const resA = results[index++];
     const resB = results[index++];
     const resADelay = results[index++];

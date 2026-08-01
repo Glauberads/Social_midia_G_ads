@@ -9,7 +9,8 @@
         "test:integration:tenants": "node test/tenants-integration.script.js",
         "test:integration:tenant-context": "node test/tenant-context-integration.script.js",
         "test:integration:memberships": "node test/memberships-integration.script.js",
-        "test:integration:invitations": "jest test/invitations.e2e-spec.ts --runInBand",
+        "test:integration:invitations": "jest test/invitations.e2e-spec.ts --config test/jest-e2e.json --runInBand",
+        "test:rls": "jest test/rls.e2e-spec.ts --config test/jest-e2e.json --runInBand",
         "test:watch": "jest --watch"
     },
     "dependencies": {

@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
 import { PrismaMembershipRepository } from '../../infrastructure/prisma-membership.repository';
 import { TenantScope } from '../../../tenants/domain/tenant.types';
 import { Role, MembershipStatus, Prisma } from '@projeto/database';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import {
   MembershipNotFoundException,
   LastOwnerProtectedException,
@@ -14,7 +14,7 @@ import {
 @Injectable()
 export class ManageMembershipUseCase {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly tenantTransaction: TenantTransactionService,
     private readonly membershipRepo: PrismaMembershipRepository,
   ) {}
 
@@ -37,12 +37,12 @@ export class ManageMembershipUseCase {
       throw new CannotManageSelfException();
     }
 
-    const membership = await this.membershipRepo.findById(scope, membershipId);
-    if (!membership) throw new MembershipNotFoundException();
+    return this.tenantTransaction.execute(scope, async (tx) => {
+      const membership = await this.membershipRepo.findById(scope, membershipId, tx);
+      if (!membership) throw new MembershipNotFoundException();
 
-    this.validateManagementRules(scope.role as Role, membership.role, 'ROLE', newRole);
+      this.validateManagementRules(scope.role as Role, membership.role, 'ROLE', newRole);
 
-    await this.prisma.$transaction(async (tx) => {
       // Protection against demoting last OWNER
       if (membership.role === 'OWNER' && newRole !== 'OWNER' && membership.status === 'ACTIVE') {
         const owners = await this.membershipRepo.getActiveOwnersForUpdate(scope.tenantId, tx);
@@ -71,12 +71,12 @@ export class ManageMembershipUseCase {
       throw new CannotManageSelfException();
     }
 
-    const membership = await this.membershipRepo.findById(scope, membershipId);
-    if (!membership) throw new MembershipNotFoundException();
+    return this.tenantTransaction.execute(scope, async (tx) => {
+      const membership = await this.membershipRepo.findById(scope, membershipId, tx);
+      if (!membership) throw new MembershipNotFoundException();
 
-    this.validateManagementRules(scope.role as Role, membership.role, 'STATUS');
+      this.validateManagementRules(scope.role as Role, membership.role, 'STATUS');
 
-    await this.prisma.$transaction(async (tx) => {
       // Protection against suspending last active OWNER
       if (membership.role === 'OWNER' && membership.status === 'ACTIVE' && newStatus === 'SUSPENDED') {
         const owners = await this.membershipRepo.getActiveOwnersForUpdate(scope.tenantId, tx);
@@ -107,14 +107,14 @@ export class ManageMembershipUseCase {
       throw new CannotManageSelfException();
     }
 
-    const membership = await this.membershipRepo.findById(scope, membershipId);
-    if (!membership) throw new MembershipNotFoundException();
+    return this.tenantTransaction.execute(scope, async (tx) => {
+      const membership = await this.membershipRepo.findById(scope, membershipId, tx);
+      if (!membership) throw new MembershipNotFoundException();
 
-    if (scope.membershipId !== membershipId) {
-       this.validateManagementRules(scope.role as Role, membership.role, 'REMOVE');
-    }
+      if (scope.membershipId !== membershipId) {
+         this.validateManagementRules(scope.role as Role, membership.role, 'REMOVE');
+      }
 
-    await this.prisma.$transaction(async (tx) => {
       // Protection against removing last active OWNER
       if (membership.role === 'OWNER' && membership.status === 'ACTIVE') {
         const owners = await this.membershipRepo.getActiveOwnersForUpdate(scope.tenantId, tx);

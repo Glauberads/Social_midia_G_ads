@@ -1,4 +1,5 @@
 import { ListUserTenantsUseCase } from './list-user-tenants.use-case';
+import { TenantRepository } from '../ports/tenant.repository';
 
 describe('ListUserTenantsUseCase', () => {
   let useCase: ListUserTenantsUseCase;
@@ -22,7 +23,14 @@ describe('ListUserTenantsUseCase', () => {
       ]),
     };
 
-    useCase = new ListUserTenantsUseCase(mockTenantRepo);
+    const mockUow = {
+      executeGlobal: jest.fn().mockImplementation((userId, cb) => cb({}))
+    };
+
+    useCase = new ListUserTenantsUseCase(
+      mockTenantRepo as unknown as TenantRepository,
+      mockUow as any
+    );
   });
 
   it('deve listar apenas os tenants em que o usuario possui membership', async () => {

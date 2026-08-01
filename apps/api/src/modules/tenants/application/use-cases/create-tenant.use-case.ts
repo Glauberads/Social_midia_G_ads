@@ -23,7 +23,7 @@ export class CreateTenantUseCase {
       throw new TenantSlugAlreadyExistsException();
     }
 
-    return this.uow.execute(async (tx) => {
+    return this.uow.executeGlobal(userId, async (tx) => {
       // 1. Confirm UserProfile exists
       const userProfile = await tx.userProfile.findUnique({
         where: { id: userId },
@@ -39,50 +39,46 @@ export class CreateTenantUseCase {
         throw new TenantSlugAlreadyExistsException();
       }
 
-      // 3. Create Tenant
-      const tenant = await this.tenantRepository.create(
-        { name: dto.name, slug: dto.slug },
-        tx,
-      );
+      // 3. Create Tenant via SECURITY DEFINER function since RLS blocks normal inserts
+      // We generate UUIDs here
+      const crypto = require('crypto');
+      const tenantId = crypto.randomUUID();
+      const membershipId = crypto.randomUUID();
+      const auditLogId = crypto.randomUUID();
 
-      // 4. Create Membership OWNER
-      const membership = await this.membershipRepository.create(
-        {
-          userId,
-          tenantId: tenant.id,
-          role: 'OWNER',
-        },
-        tx,
-      );
+      await tx.$executeRaw`
+        SELECT public.create_tenant_with_owner(
+          ${userId}::uuid, 
+          ${tenantId}::uuid, 
+          ${dto.name}, 
+          ${dto.slug}, 
+          ${membershipId}::uuid
+        )
+      `;
 
-      // 5. Create AuditLog
-      await this.auditLogRepository.append(
-        {
-          action: 'TENANT_CREATED',
-          entity: 'Tenant',
-          entityId: tenant.id,
-          actorId: userId,
-          tenantId: tenant.id,
-          requestId,
-          metadata: {
-            tenantName: tenant.name,
-            tenantSlug: tenant.slug,
-          },
-        },
-        tx,
-      );
+      // 5. Create AuditLog via SECURITY DEFINER function
+      await tx.$executeRaw`
+        SELECT public.log_global_audit(
+          ${auditLogId}::uuid,
+          'TENANT_CREATED',
+          'Tenant',
+          ${tenantId},
+          ${userId}::uuid,
+          ${{ tenantName: dto.name, tenantSlug: dto.slug }}::jsonb
+        )
+      `;
 
       return {
-        id: tenant.id,
-        name: tenant.name,
-        slug: tenant.slug,
-        status: tenant.status,
+        id: tenantId,
+        name: dto.name,
+        slug: dto.slug,
+        status: 'ACTIVE',
         membership: {
-          id: membership.id,
-          role: membership.role,
-          status: membership.status,
+          id: membershipId,
+          role: 'OWNER',
+          status: 'ACTIVE',
         },
-        createdAt: tenant.createdAt,
+        createdAt: new Date(),
       };
     });
   }

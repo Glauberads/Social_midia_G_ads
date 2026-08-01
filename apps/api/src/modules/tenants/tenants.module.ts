@@ -16,10 +16,13 @@ import { PrismaModule } from '../prisma/prisma.module';
 
 import { AuthModule } from '../auth/auth.module';
 
+import { TenantTransactionService } from './application/services/tenant-transaction.service';
+
 @Module({
   imports: [PrismaModule, AuthModule],
   controllers: [TenantsController, TenantContextController],
   providers: [
+    TenantTransactionService,
     CreateTenantUseCase,
     ListUserTenantsUseCase,
     TenantContextService,
@@ -40,6 +43,6 @@ import { AuthModule } from '../auth/auth.module';
       useClass: PrismaUnitOfWork,
     },
   ],
-  exports: [TenantContextService],
+  exports: [TenantContextService, TenantTransactionService],
 })
 export class TenantsModule {}

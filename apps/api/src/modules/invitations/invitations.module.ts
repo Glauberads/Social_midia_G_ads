@@ -8,8 +8,10 @@ import { ListInvitationsUseCase } from './application/use-cases/list-invitations
 import { PrismaInvitationRepository } from './infrastructure/prisma-invitation.repository';
 import { SupabaseAuthenticatedUserProvider } from './infrastructure/supabase-authenticated-user.provider';
 
+import { TenantsModule } from '../tenants/tenants.module';
+
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, TenantsModule],
   controllers: [InvitationsController],
   providers: [
     CreateInvitationUseCase,

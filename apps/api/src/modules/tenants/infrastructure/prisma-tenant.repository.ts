@@ -33,8 +33,9 @@ export class PrismaTenantRepository implements TenantRepository {
     }
   }
 
-  async findUserTenants(userId: string): Promise<any[]> {
-    return await this.prisma.membership.findMany({
+  async findUserTenants(userId: string, tx?: any): Promise<any[]> {
+    const client = tx || this.prisma;
+    return await client.membership.findMany({
       where: { userId },
       include: {
         tenant: true,

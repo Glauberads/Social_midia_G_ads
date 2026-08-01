@@ -1,6 +1,6 @@
 import { Injectable, ConflictException, ForbiddenException, GoneException, Inject } from '@nestjs/common';
 import { Role, InvitationStatus } from '@prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import { ConfigService } from '@nestjs/config';
 import { InvitationTokenHasher } from '../../domain/invitation-crypto';
 import { EmailNormalizer } from '../../domain/email-normalizer';
@@ -11,7 +11,7 @@ import { AuthenticatedUserResolver } from '../../application/ports/authenticated
 export class AcceptInvitationUseCase {
   constructor(
     @Inject('AuthenticatedUserResolver') private readonly authResolver: AuthenticatedUserResolver,
-    private readonly prisma: PrismaService,
+    private readonly tenantTransaction: TenantTransactionService,
     private readonly config: ConfigService
   ) {}
 
@@ -24,7 +24,7 @@ export class AcceptInvitationUseCase {
 
     const tokenHash = InvitationTokenHasher.hash(rawToken, pepper);
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.tenantTransaction.executeGlobal(userId, async (tx) => {
       type LockedInvitationRow = {
         id: string;
         email: string;
@@ -59,6 +59,8 @@ export class AcceptInvitationUseCase {
         // The instruction says "expiresAt <= now() significa convite expirado; aceite retorna 410 INVITATION_EXPIRED; nenhuma Membership é criada"
         throw new GoneException('INVITATION_EXPIRED');
       }
+
+      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${invitation.tenantId}, true)`;
 
       // 3. Validate email matches
       if (EmailNormalizer.normalize(invitation.email) !== normalizedUserEmail) {

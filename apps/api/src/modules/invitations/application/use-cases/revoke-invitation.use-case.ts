@@ -1,14 +1,14 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import { TenantScope } from '../../../tenants/domain/tenant.types';
 import { Role, InvitationStatus } from '@prisma/client';
 
 @Injectable()
 export class RevokeInvitationUseCase {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly tenantTransaction: TenantTransactionService) {}
 
   async execute(scope: TenantScope, invitationId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.tenantTransaction.execute(scope, async (tx) => {
       type LockedRevokeRow = {
         id: string;
         email: string;

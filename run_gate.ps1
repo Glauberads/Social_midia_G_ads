@@ -106,13 +106,14 @@ Write-Host "API is ready. Running tests..."
 
 $commands = @(
     "pnpm --filter @projeto/database test:integration",
+    "pnpm --filter api test:rls",
     "pnpm --filter api test:integration:tenants",
     "pnpm --filter api test:integration:tenant-context",
     "pnpm --filter api test:integration:memberships",
     "pnpm --filter api test:integration:invitations",
     "pnpm lint",
     "pnpm typecheck",
-    "pnpm test",
+    "pnpm --filter api run test -- --runInBand",
     "pnpm audit --json"
 )
 
