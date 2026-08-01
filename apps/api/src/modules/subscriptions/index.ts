@@ -1,1 +1,1 @@
-﻿// Public exports for subscriptions
+// Public exports for subscriptions

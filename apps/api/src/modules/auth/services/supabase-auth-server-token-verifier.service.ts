@@ -15,13 +15,16 @@ export class SupabaseAuthServerTokenVerifier implements AccessTokenVerifier {
       throw new Error('SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required for auth-server verification mode');
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     try {
       const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'apikey': publishableKey,
         },
-        signal: AbortSignal.timeout(5000), // Timeout de 5s
+        signal: controller.signal,
       });
 
       if (response.status === 401 || response.status === 403) {
@@ -48,10 +51,15 @@ export class SupabaseAuthServerTokenVerifier implements AccessTokenVerifier {
         expiresAt: new Date((decoded.exp as number) * 1000),
       };
     } catch (e: any) {
+      if (e.name === 'AbortError') {
+        throw new HttpException('Auth server timeout', HttpStatus.SERVICE_UNAVAILABLE);
+      }
       if (e instanceof UnauthorizedException || e instanceof HttpException) {
         throw e;
       }
-      throw new HttpException('Auth server error: ' + e.message, HttpStatus.SERVICE_UNAVAILABLE);
+      throw new HttpException('Auth server error', HttpStatus.SERVICE_UNAVAILABLE);
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }

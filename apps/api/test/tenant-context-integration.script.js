@@ -8,6 +8,14 @@ async function runTests() {
   const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
   const API_URL = 'http://127.0.0.1:3001/api';
 
+  // API PREFLIGHT
+  try {
+    await fetch(`${API_URL}/health/live`);
+  } catch (e) {
+    console.error("ERRO CRÍTICO: API não está rodando em 127.0.0.1:3001");
+    process.exit(1);
+  }
+
   let anonKey = '';
   try {
     const envPath = path.resolve(__dirname, '../../../apps/web/.env.example');
@@ -150,7 +158,7 @@ async function runTests() {
   console.log("\nALL INTEGRATION TESTS PASSED!");
 }
 
-runTests().catch(e => {
-  console.error(e);
-  process.exit(1);
+runTests().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });

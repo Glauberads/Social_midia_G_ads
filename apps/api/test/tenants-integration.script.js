@@ -10,6 +10,14 @@ async function runTests() {
   const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
   const API_URL = 'http://127.0.0.1:3001/api';
 
+  // API PREFLIGHT
+  try {
+    await fetch(`${API_URL}/health/live`);
+  } catch (e) {
+    console.error("ERRO CRÍTICO: API não está rodando em 127.0.0.1:3001");
+    process.exit(1);
+  }
+
   if (!DATABASE_URL.includes('127.0.0.1') && !DATABASE_URL.includes('localhost')) {
     console.error("ERRO CRÍTICO: DATABASE_URL não aponta para o ambiente local.");
     process.exit(1);
@@ -145,4 +153,7 @@ async function runTests() {
   console.log("\nALL INTEGRATION TESTS PASSED!");
 }
 
-runTests().catch(console.error);
+runTests().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

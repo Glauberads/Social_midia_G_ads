@@ -1,9 +1,8 @@
-import { Controller, Get, Patch, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Delete, Body, Param } from '@nestjs/common';
 import { TenantScoped } from '../../auth/decorators/tenant-scoped.decorator';
 import { RequireRoles } from '../../auth/decorators/require-roles.decorator';
 import { CurrentTenant } from '../../auth/decorators/current-tenant.decorator';
 import { TenantScope } from '../../tenants/domain/tenant.types';
-import { RbacGuard } from '../../auth/guards/rbac.guard';
 import { PrismaMembershipRepository } from '../infrastructure/prisma-membership.repository';
 import { ManageMembershipUseCase } from '../application/use-cases/manage-membership.use-case';
 import { ChangeRoleDto } from './dto/change-role.dto';
@@ -11,7 +10,6 @@ import { ChangeStatusDto } from './dto/change-status.dto';
 
 @Controller('memberships')
 @TenantScoped()
-@UseGuards(RbacGuard)
 export class MembershipsController {
   constructor(
     private readonly membershipRepo: PrismaMembershipRepository,

@@ -1,1 +1,1 @@
-﻿// Public exports for usage
+// Public exports for usage

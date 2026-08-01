@@ -1,1 +1,1 @@
-﻿// Public exports for whatsapp-connections
+// Public exports for whatsapp-connections

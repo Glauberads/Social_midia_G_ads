@@ -1,1 +1,1 @@
-﻿// Public exports for instagram-connections
+// Public exports for instagram-connections

@@ -1,1 +1,1 @@
-﻿// Public exports for identity
+// Public exports for identity

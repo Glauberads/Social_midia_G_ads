@@ -1,1 +1,1 @@
-﻿// Public exports for brand-kits
+// Public exports for brand-kits

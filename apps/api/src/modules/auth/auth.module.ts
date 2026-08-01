@@ -6,6 +6,8 @@ import { SupabaseAuthServerTokenVerifier } from './services/supabase-auth-server
 import { PrismaModule } from '../prisma/prisma.module';
 import { APP_GUARD } from '@nestjs/core';
 import { SupabaseAuthGuard } from './guards/supabase-auth.guard';
+import { TenantResolverGuard } from './guards/tenant-resolver.guard';
+import { RbacGuard } from './guards/rbac.guard';
 
 @Module({
   imports: [ConfigModule, PrismaModule],
@@ -25,6 +27,14 @@ import { SupabaseAuthGuard } from './guards/supabase-auth.guard';
     {
       provide: APP_GUARD,
       useClass: SupabaseAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: TenantResolverGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RbacGuard,
     },
   ],
   exports: ['AccessTokenVerifier'],

@@ -1,1 +1,1 @@
-﻿// Public exports for scheduling
+// Public exports for scheduling

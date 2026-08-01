@@ -5,33 +5,59 @@ const jwt = require('jsonwebtoken');
 
 const API_URL = 'http://127.0.0.1:3001/api';
 
-const generateToken = (userId, email) => {
-  return jwt.sign({
-    sub: userId,
-    email: email,
-    role: 'authenticated',
-    aud: 'authenticated',
-  }, process.env.SUPABASE_JWT_SECRET || 'super-secret-jwt-token-with-at-least-32-characters-long');
-};
+const crypto = require('crypto');
+
+  // Removed generateToken, using Supabase auth
 
 async function run() {
   console.log("--- TESTES DE INTEGRAÇÃO REAIS DA API (MEMBERSHIPS E RBAC) ---");
-  await prisma.auditLog.deleteMany({});
-  await prisma.membership.deleteMany({});
-  await prisma.tenant.deleteMany({});
-  await prisma.userProfile.deleteMany({});
+  // API PREFLIGHT
+  try {
+    await fetch(`${API_URL}/health/live`);
+  } catch (e) {
+    console.error("ERRO CRÍTICO: API não está rodando em 127.0.0.1:3001");
+    process.exit(1);
+  }
 
-  // Criar Usuários
-  const userA1 = await prisma.userProfile.create({ data: { id: 'a1000000-0000-0000-0000-000000000000', email: 'owner.a1@test.com' } });
-  const userA2 = await prisma.userProfile.create({ data: { id: 'a2000000-0000-0000-0000-000000000000', email: 'owner.a2@test.com' } });
-  const adminA = await prisma.userProfile.create({ data: { id: 'a3000000-0000-0000-0000-000000000000', email: 'admin.a@test.com' } });
-  const memberA = await prisma.userProfile.create({ data: { id: 'a4000000-0000-0000-0000-000000000000', email: 'member.a@test.com' } });
-  const viewerA = await prisma.userProfile.create({ data: { id: 'a5000000-0000-0000-0000-000000000000', email: 'viewer.a@test.com' } });
-  const userB = await prisma.userProfile.create({ data: { id: 'b1000000-0000-0000-0000-000000000000', email: 'owner.b@test.com' } });
+  const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
+  let anonKey = '';
+  try {
+    const envPath = require('path').resolve(__dirname, '../../../apps/web/.env.example');
+    const envContent = require('fs').readFileSync(envPath, 'utf-8');
+    const match = envContent.match(/NEXT_PUBLIC_SUPABASE_ANON_KEY="?(.*)"?/);
+    if (match && match[1]) anonKey = match[1].replace(/"/g, '');
+  } catch (e) {}
+
+  async function signUp(email) {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+      method: 'POST',
+      headers: { 'apikey': anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'password123' })
+    });
+    const data = await res.json();
+    return data;
+  }
+
+  const createTestUser = async (prefix) => {
+    const email = `${prefix}.${Date.now()}@test.com`;
+    const data = await signUp(email);
+    const userId = data.user ? data.user.id : data.id; // handle different Supabase shapes
+    const accessToken = data.access_token || data.session?.access_token;
+    // Wait for trigger to create userProfile
+    await new Promise(r => setTimeout(r, 200));
+    return { id: userId, email, accessToken };
+  };
+
+  const userA1 = await createTestUser('owner.a1');
+  const userA2 = await createTestUser('owner.a2');
+  const adminA = await createTestUser('admin.a');
+  const memberA = await createTestUser('member.a');
+  const viewerA = await createTestUser('viewer.a');
+  const userB = await createTestUser('owner.b');
 
   // Criar Tenants
-  const tenantA = await prisma.tenant.create({ data: { name: 'Tenant A', slug: 'tenant-a' } });
-  const tenantB = await prisma.tenant.create({ data: { name: 'Tenant B', slug: 'tenant-b' } });
+  const tenantA = await prisma.tenant.create({ data: { name: 'Tenant A', slug: `tenant-a-${Date.now()}` } });
+  const tenantB = await prisma.tenant.create({ data: { name: 'Tenant B', slug: `tenant-b-${Date.now()}` } });
 
   // Memberships
   await prisma.membership.create({ data: { userId: userA1.id, tenantId: tenantA.id, role: 'OWNER' } });
@@ -42,11 +68,12 @@ async function run() {
   
   await prisma.membership.create({ data: { userId: userB.id, tenantId: tenantB.id, role: 'OWNER' } });
 
-  const tokenOwnerA1 = generateToken(userA1.id, userA1.email);
-  const tokenAdminA = generateToken(adminA.id, adminA.email);
-  const tokenMemberA = generateToken(memberA.id, memberA.email);
-  const tokenViewerA = generateToken(viewerA.id, viewerA.email);
-  const tokenOwnerB = generateToken(userB.id, userB.email);
+  const tokenOwnerA1 = userA1.accessToken;
+  const tokenAdminA = adminA.accessToken;
+  const tokenMemberA = memberA.accessToken;
+  const tokenViewerA = viewerA.accessToken;
+  const tokenOwnerB = userB.accessToken;
+  const tokenA2 = userA2.accessToken;
 
   const req = (method, path, token, tenantId, body) => fetch(`${API_URL}${path}`, {
     method,
@@ -116,14 +143,14 @@ async function run() {
   // 13. membership suspensa perde acesso imediatamente.
   res = await req('PATCH', `/memberships/${memA2.id}/status`, tokenOwnerA1, tenantA.id, { status: 'SUSPENDED' });
   if (res.status !== 200) throw new Error("OWNER falhou ao suspender membro");
-  const resSuspended = await fetch(`${API_URL}/tenant-context`, { headers: { 'Authorization': `Bearer ${tokenA2 || generateToken(userA2.id, userA2.email)}`, 'x-tenant-id': tenantA.id } });
+  const resSuspended = await fetch(`${API_URL}/tenant-context`, { headers: { 'Authorization': `Bearer ${tokenA2}`, 'x-tenant-id': tenantA.id } });
   if (resSuspended.status !== 403) throw new Error("Membership suspensa ainda tem acesso");
   console.log("13. membership suspensa perde acesso imediatamente.");
 
   // 14. membership reativada recupera acesso.
   res = await req('PATCH', `/memberships/${memA2.id}/status`, tokenOwnerA1, tenantA.id, { status: 'ACTIVE' });
   if (res.status !== 200) throw new Error("OWNER falhou ao reativar membro");
-  const resActive = await fetch(`${API_URL}/tenant-context`, { headers: { 'Authorization': `Bearer ${generateToken(userA2.id, userA2.email)}`, 'x-tenant-id': tenantA.id } });
+  const resActive = await fetch(`${API_URL}/tenant-context`, { headers: { 'Authorization': `Bearer ${tokenA2}`, 'x-tenant-id': tenantA.id } });
   if (resActive.status !== 200) throw new Error("Membership reativada não teve acesso");
   console.log("14. membership reativada recupera acesso.");
 
@@ -140,14 +167,14 @@ async function run() {
   const testConcurrency = async (scenarioName, actionMethod, actionPath, actionBody) => {
     console.log(`Testando Cenário: ${scenarioName}`);
     const tcTenant = await prisma.tenant.create({ data: { name: `Cenário ${scenarioName}`, slug: `cenario-${Date.now()}` } });
-    const tcUserA = await prisma.userProfile.create({ data: { id: `c1000000-0000-0000-0000-${Date.now()}`, email: `c.a.${Date.now()}@test.com` } });
-    const tcUserB = await prisma.userProfile.create({ data: { id: `c2000000-0000-0000-0000-${Date.now()}`, email: `c.b.${Date.now()}@test.com` } });
+    const tcUserA = await createTestUser(`c.a.${Date.now()}`);
+    const tcUserB = await createTestUser(`c.b.${Date.now()}`);
     
     const memA = await prisma.membership.create({ data: { userId: tcUserA.id, tenantId: tcTenant.id, role: 'OWNER' } });
     const memB = await prisma.membership.create({ data: { userId: tcUserB.id, tenantId: tcTenant.id, role: 'OWNER' } });
     
-    const tokenA = generateToken(tcUserA.id, tcUserA.email);
-    const tokenB = generateToken(tcUserB.id, tcUserB.email);
+    const tokenA = tcUserA.accessToken;
+    const tokenB = tcUserB.accessToken;
 
     // A tenta alterar B, e B tenta alterar A
     const [res1, res2] = await Promise.all([
@@ -193,10 +220,11 @@ async function run() {
   console.log("✔️  Testes de auto-gestão passaram.");
 
   console.log("ALL INTEGRATION TESTS PASSED!");
-  process.exit(0);
 }
 
-run().catch(e => {
-  console.error(e);
-  process.exit(1);
+run().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+}).finally(async () => {
+  await prisma.$disconnect();
 });

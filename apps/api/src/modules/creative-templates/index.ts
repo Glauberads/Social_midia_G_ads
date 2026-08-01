@@ -1,1 +1,1 @@
-﻿// Public exports for creative-templates
+// Public exports for creative-templates

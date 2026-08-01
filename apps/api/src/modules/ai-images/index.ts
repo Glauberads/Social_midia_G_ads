@@ -1,1 +1,1 @@
-﻿// Public exports for ai-images
+// Public exports for ai-images

@@ -1,1 +1,1 @@
-﻿// Public exports for analytics
+// Public exports for analytics

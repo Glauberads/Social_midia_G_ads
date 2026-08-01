@@ -1,1 +1,1 @@
-﻿// Public exports for authentication
+// Public exports for authentication

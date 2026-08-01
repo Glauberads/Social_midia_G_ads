@@ -1,1 +1,1 @@
-﻿// Public exports for media-assets
+// Public exports for media-assets

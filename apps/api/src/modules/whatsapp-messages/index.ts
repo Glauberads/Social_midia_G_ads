@@ -1,1 +1,1 @@
-﻿// Public exports for whatsapp-messages
+// Public exports for whatsapp-messages

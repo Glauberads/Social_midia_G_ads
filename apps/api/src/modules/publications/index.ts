@@ -1,1 +1,1 @@
-﻿// Public exports for publications
+// Public exports for publications

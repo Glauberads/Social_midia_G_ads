@@ -1,1 +1,1 @@
-﻿// Public exports for billing
+// Public exports for billing

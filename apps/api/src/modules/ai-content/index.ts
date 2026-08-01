@@ -1,1 +1,1 @@
-﻿// Public exports for ai-content
+// Public exports for ai-content
