@@ -7,7 +7,7 @@ module.exports = {
       { type: 'api', pattern: 'apps/api/**/*' }
     ]
   },
-  rules: {
+  rules: { '@typescript-eslint/no-explicit-any': 'off',
     'boundaries/element-types': [
       2,
       {

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 import * as jwt from 'jsonwebtoken';
@@ -15,13 +15,26 @@ describe('Invitations (e2e)', () => {
   let ownerId: string;
   let memberId: string;
 
-  const generateToken = (userId: string, email: string) => {
-    return jwt.sign({
-      sub: userId,
-      email: email,
-      role: 'authenticated',
-      aud: 'authenticated',
-    }, process.env.SUPABASE_JWT_SECRET || 'super-secret-jwt-token-with-at-least-32-characters-long');
+  const generateToken = async (email: string) => {
+    let anonKey = '';
+    const envPath = require('path').resolve(__dirname, '../../../apps/web/.env.example');
+    const envContent = require('fs').readFileSync(envPath, 'utf-8');
+    const match = envContent.match(/NEXT_PUBLIC_SUPABASE_ANON_KEY="?(.*)"?/);
+    if (match && match[1]) anonKey = match[1].replace(/"/g, '');
+
+    const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
+
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+      method: 'POST',
+      headers: { 'apikey': anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'password123' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error('Signup failed: ' + JSON.stringify(data));
+    }
+
+    return { token: data.access_token, id: data.user.id };
   };
 
   beforeAll(async () => {
@@ -34,24 +47,27 @@ describe('Invitations (e2e)', () => {
     await app.init();
 
     prisma = app.get<PrismaService>(PrismaService);
-    
+
     // Clean up
     await prisma.membership.deleteMany({});
     await prisma.invitation.deleteMany({});
     await prisma.tenant.deleteMany({});
-    await prisma.userProfile.deleteMany({});
 
-    ownerId = 'o0000000-0000-0000-0000-000000000000';
-    memberId = 'm0000000-0000-0000-0000-000000000000';
-    const noTenantId = 'n0000000-0000-0000-0000-000000000000';
+    const timestamp = Date.now();
+    const ownerEmail = `owner_inv_${timestamp}@e2e.com`;
+    const memberEmail = `member_inv_${timestamp}@e2e.com`;
+    const noTenantEmail = `notenant_inv_${timestamp}@e2e.com`;
 
-    await prisma.userProfile.createMany({
-      data: [
-        { id: ownerId, email: 'owner@e2e.com' },
-        { id: memberId, email: 'member@e2e.com' },
-        { id: noTenantId, email: 'notenant@e2e.com' },
-      ],
-    });
+    const ownerRes = await generateToken(ownerEmail);
+    ownerToken = ownerRes.token;
+    ownerId = ownerRes.id;
+
+    const memberRes = await generateToken(memberEmail);
+    memberToken = memberRes.token;
+    memberId = memberRes.id;
+
+    const noTenantRes = await generateToken(noTenantEmail);
+    noTenantToken = noTenantRes.token;
 
     const tenant = await prisma.tenant.create({
       data: { name: 'E2E Tenant', slug: 'e2e-tenant' },
@@ -64,10 +80,6 @@ describe('Invitations (e2e)', () => {
         { userId: memberId, tenantId: tenantId, role: 'MEMBER' },
       ],
     });
-
-    ownerToken = generateToken(ownerId, 'owner@e2e.com');
-    memberToken = generateToken(memberId, 'member@e2e.com');
-    noTenantToken = generateToken(noTenantId, 'notenant@e2e.com');
   });
 
   afterAll(async () => {

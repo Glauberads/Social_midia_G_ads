@@ -32,6 +32,9 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     // Ensure postgres can set role
     await prisma.$executeRaw`GRANT api_user TO postgres`;
+
+    // Clear ContentRequest just in case it has leftovers
+    await prisma.$executeRaw`DELETE FROM public."ContentRequest"`;
   });
 
   afterAll(async () => {
@@ -42,6 +45,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     
     await prisma.$executeRaw`DELETE FROM public."Invitation"`;
     await prisma.$executeRaw`DELETE FROM public."Membership"`;
+    await prisma.$executeRaw`DELETE FROM public."ContentRequest"`;
     await prisma.$executeRaw`DELETE FROM public."Tenant"`;
     await prisma.$executeRaw`DELETE FROM auth.users WHERE email LIKE 'test%@test.com'`;
     await prisma.$disconnect();
@@ -272,6 +276,33 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       await asUser('', '', async (tx) => {
         const mems = await tx.$queryRaw<any[]>`SELECT * FROM public."Membership"`;
         expect(mems.length).toBe(0);
+      });
+    });
+  });
+  describe('CONTENTREQUEST', () => {
+    it('insert com tenantId e userId corretos funciona', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const id = 'c0000000-0000-0000-0000-000000000010';
+        const result = await tx.$executeRaw`INSERT INTO public."ContentRequest" (id, "tenantId", "createdById", title, briefing, platform, status, "createdAt", "updatedAt") VALUES (${id}::uuid, ${tenantAId}::uuid, ${userIdA}::uuid, 'Test', 'Test Briefing', 'INSTAGRAM_FEED', 'DRAFT', NOW(), NOW())`;
+        expect(result).toBe(1);
+      });
+    });
+
+    it('insert com createdById de outro usuário falha', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const id = 'c0000000-0000-0000-0000-000000000011';
+        await expect(tx.$executeRaw`INSERT INTO public."ContentRequest" (id, "tenantId", "createdById", title, briefing, platform, status, "createdAt", "updatedAt") VALUES (${id}::uuid, ${tenantAId}::uuid, ${userIdB}::uuid, 'Test', 'Test', 'INSTAGRAM_FEED', 'DRAFT', NOW(), NOW())`).rejects.toThrow();
+      });
+    });
+
+    it('A não lê ContentRequest de B', async () => {
+      await asUser(userIdB, tenantBId, async (tx) => {
+        const id = 'c0000000-0000-0000-0000-000000000012';
+        await tx.$executeRaw`INSERT INTO public."ContentRequest" (id, "tenantId", "createdById", title, briefing, platform, status, "createdAt", "updatedAt") VALUES (${id}::uuid, ${tenantBId}::uuid, ${userIdB}::uuid, 'Test B', 'Test B', 'INSTAGRAM_FEED', 'DRAFT', NOW(), NOW())`;
+      });
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const reqs = await tx.$queryRaw<any[]>`SELECT * FROM public."ContentRequest" WHERE "tenantId" = ${tenantBId}::uuid`;
+        expect(reqs.length).toBe(0);
       });
     });
   });

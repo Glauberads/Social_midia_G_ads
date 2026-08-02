@@ -14,6 +14,8 @@ import { AppController } from './app.controller';
 import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { TenantContextInterceptor } from './modules/tenants/presentation/tenant-context.interceptor';
 
+import { ContentModule } from './modules/content/content.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -34,6 +36,7 @@ import { TenantContextInterceptor } from './modules/tenants/presentation/tenant-
     MembershipsModule,
     InvitationsModule,
     HealthModule,
+    ContentModule,
   ],
   controllers: [AppController],
   providers: [

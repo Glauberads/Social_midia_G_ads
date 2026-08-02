@@ -32,7 +32,7 @@ export default function DashboardPage() {
       const token = data.session.access_token;
 
       // Fetch user profile
-      const resProfile = await fetch('http://localhost:3001/api/auth/me', {
+      const resProfile = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -46,7 +46,7 @@ export default function DashboardPage() {
       setProfile(await resProfile.json());
 
       // Fetch tenants
-      const resTenants = await fetch('http://localhost:3001/api/tenants', {
+      const resTenants = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/tenants`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -84,7 +84,7 @@ export default function DashboardPage() {
 
       localStorage.setItem('glauberads_preferred_tenant', selectedTenantId);
 
-      const resContext = await fetch('http://localhost:3001/api/tenant-context', {
+      const resContext = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/tenant-context`, {
         headers: {
           'Authorization': `Bearer ${data.session.access_token}`,
           'x-tenant-id': selectedTenantId
@@ -96,7 +96,7 @@ export default function DashboardPage() {
         setTenantContext(ctx);
 
         if (ctx.role === 'OWNER' || ctx.role === 'ADMIN') {
-          const resMemberships = await fetch('http://localhost:3001/api/memberships', {
+          const resMemberships = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships`, {
             headers: {
               'Authorization': `Bearer ${data.session.access_token}`,
               'x-tenant-id': selectedTenantId
@@ -106,7 +106,7 @@ export default function DashboardPage() {
             setMemberships(await resMemberships.json());
           }
 
-          const resInvitations = await fetch('http://localhost:3001/api/invitations', {
+          const resInvitations = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations`, {
             headers: {
               'Authorization': `Bearer ${data.session.access_token}`,
               'x-tenant-id': selectedTenantId
@@ -141,7 +141,7 @@ export default function DashboardPage() {
 
     const slug = newTenantName.toLowerCase().replace(/\s+/g, '-');
 
-    const res = await fetch('http://localhost:3001/api/tenants', {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/tenants`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${data.session.access_token}`,
@@ -167,7 +167,7 @@ export default function DashboardPage() {
   async function loadMemberships() {
     const { data } = await supabase.auth.getSession();
     if (!data.session || !selectedTenantId) return;
-    const res = await fetch('http://localhost:3001/api/memberships', {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships`, {
       headers: {
         'Authorization': `Bearer ${data.session.access_token}`,
         'x-tenant-id': selectedTenantId
@@ -179,7 +179,7 @@ export default function DashboardPage() {
   async function loadInvitations() {
     const { data } = await supabase.auth.getSession();
     if (!data.session || !selectedTenantId) return;
-    const res = await fetch('http://localhost:3001/api/invitations', {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations`, {
       headers: {
         'Authorization': `Bearer ${data.session.access_token}`,
         'x-tenant-id': selectedTenantId
@@ -190,7 +190,7 @@ export default function DashboardPage() {
 
   async function handleChangeRole(membershipId: string, role: string) {
     const { data } = await supabase.auth.getSession();
-    const res = await fetch(`http://localhost:3001/api/memberships/${membershipId}/role`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships/${membershipId}/role`, {
       method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${data.session?.access_token}`,
@@ -209,7 +209,7 @@ export default function DashboardPage() {
 
   async function handleChangeStatus(membershipId: string, status: string) {
     const { data } = await supabase.auth.getSession();
-    const res = await fetch(`http://localhost:3001/api/memberships/${membershipId}/status`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships/${membershipId}/status`, {
       method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${data.session?.access_token}`,
@@ -229,7 +229,7 @@ export default function DashboardPage() {
   async function handleRemove(membershipId: string) {
     if (!confirm('Deseja realmente remover?')) return;
     const { data } = await supabase.auth.getSession();
-    const res = await fetch(`http://localhost:3001/api/memberships/${membershipId}`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships/${membershipId}`, {
       method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${data.session?.access_token}`,
@@ -247,7 +247,7 @@ export default function DashboardPage() {
   async function handleInvite() {
     if (!newInviteEmail) return;
     const { data } = await supabase.auth.getSession();
-    const res = await fetch(`http://localhost:3001/api/invitations`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${data.session?.access_token}`,
@@ -273,7 +273,7 @@ export default function DashboardPage() {
   async function handleRevokeInvite(id: string) {
     if (!confirm('Revogar convite?')) return;
     const { data } = await supabase.auth.getSession();
-    const res = await fetch(`http://localhost:3001/api/invitations/${id}`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations/${id}`, {
       method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${data.session?.access_token}`,

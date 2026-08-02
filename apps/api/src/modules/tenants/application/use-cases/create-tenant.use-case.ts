@@ -19,6 +19,7 @@ export class CreateTenantUseCase {
   ) {}
 
   async execute(dto: CreateTenantDto, userId: string, requestId?: string): Promise<TenantResponse> {
+    void requestId;
     if (RESERVED_SLUGS.includes(dto.slug.toLowerCase())) {
       throw new TenantSlugAlreadyExistsException();
     }
@@ -41,7 +42,7 @@ export class CreateTenantUseCase {
 
       // 3. Create Tenant via SECURITY DEFINER function since RLS blocks normal inserts
       // We generate UUIDs here
-      const crypto = require('crypto');
+      const crypto = await import('crypto');
       const tenantId = crypto.randomUUID();
       const membershipId = crypto.randomUUID();
       const auditLogId = crypto.randomUUID();
