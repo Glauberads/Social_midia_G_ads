@@ -1,510 +1,147 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { useWorkspace } from '../components/AppShell';
+import { Icon } from '../components/Icon';
+import { EmptyState, ErrorState, LoadingSkeleton, StatCard, StatusBadge, formatDate, formatPlatform } from '../components/ui';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+
+interface TenantContext { tenantId: string; role: string; [key: string]: string }
+interface Membership { id: string; email: string; role: string; status: string }
+interface Invitation { id: string; email: string; role: string; status: string; expiresAt: string }
+interface ContentRequest { id: string; title: string; status: string; platform: string; createdAt: string }
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [profile, setProfile] = useState<{ id: string; email: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // Tenants and selection
-  const [tenants, setTenants] = useState<Array<{ id: string; name: string; slug: string }>>([]);
-  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
-  const [tenantContext, setTenantContext] = useState<Record<string, string> | null>(null);
+  const { profile, activeWorkspaceId, activeWorkspace, setActiveWorkspaceId, refreshWorkspaces } = useWorkspace();
+  const [tenantContext, setTenantContext] = useState<TenantContext | null>(null);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [contents, setContents] = useState<ContentRequest[]>([]);
   const [newTenantName, setNewTenantName] = useState('');
-  const [memberships, setMemberships] = useState<unknown[]>([]);
-  const [invitations, setInvitations] = useState<unknown[]>([]);
   const [newInviteEmail, setNewInviteEmail] = useState('');
   const [newInviteRole, setNewInviteRole] = useState('MEMBER');
   const [lastInviteLink, setLastInviteLink] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
-  useEffect(() => {
-    async function loadData() {
-      const { data, error } = await supabase.auth.getSession();
+  const authorizedFetch = useCallback(async (path: string, options: RequestInit = {}) => {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error('Sessão expirada. Entre novamente.');
+    return fetch(`${API_URL}${path}`, { ...options, headers: { Authorization: `Bearer ${data.session.access_token}`, ...(activeWorkspaceId ? { 'x-tenant-id': activeWorkspaceId } : {}), ...options.headers } });
+  }, [activeWorkspaceId]);
 
-      if (error || !data.session) {
-        router.push('/login');
-        return;
-      }
+  const loadMemberships = useCallback(async () => {
+    if (!activeWorkspaceId) return;
+    const response = await authorizedFetch('/memberships');
+    if (response.ok) setMemberships(await response.json());
+  }, [activeWorkspaceId, authorizedFetch]);
 
-      const token = data.session.access_token;
+  const loadInvitations = useCallback(async () => {
+    if (!activeWorkspaceId) return;
+    const response = await authorizedFetch('/invitations');
+    if (response.ok) setInvitations(await response.json());
+  }, [activeWorkspaceId, authorizedFetch]);
 
-      // Fetch user profile
-      const resProfile = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+  const loadDashboard = useCallback(async () => {
+    if (!activeWorkspaceId) { setTenantContext(null); setContents([]); setLoading(false); return; }
+    setLoading(true);
+    setError('');
+    setTenantContext(null);
+    setContents([]);
+    setMemberships([]);
+    setInvitations([]);
+    try {
+      const [contextResponse, contentResponse] = await Promise.all([authorizedFetch('/tenant-context'), authorizedFetch('/content-requests')]);
+      if (!contextResponse.ok) throw new Error('Não foi possível carregar o contexto do workspace.');
+      const context: TenantContext = await contextResponse.json();
+      setTenantContext(context);
+      if (!contentResponse.ok) throw new Error('Não foi possível carregar os conteúdos do workspace.');
+      setContents(await contentResponse.json());
+      if (context.role === 'OWNER' || context.role === 'ADMIN') await Promise.all([loadMemberships(), loadInvitations()]);
+      else { setMemberships([]); setInvitations([]); }
+    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Erro ao carregar o dashboard.'); }
+    finally { setLoading(false); }
+  }, [activeWorkspaceId, authorizedFetch, loadInvitations, loadMemberships]);
 
-      if (!resProfile.ok) {
-        router.push('/login');
-        return;
-      }
+  useEffect(() => { loadDashboard(); }, [loadDashboard]);
 
-      setProfile(await resProfile.json());
-
-      // Fetch tenants
-      const resTenants = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/tenants`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (resTenants.ok) {
-        const list = await resTenants.json();
-        setTenants(list);
-
-        // Auto-select preferred or first
-        const savedTenantId = localStorage.getItem('glauberads_preferred_tenant');
-        if (savedTenantId && list.find((t: { id: string }) => t.id === savedTenantId)) {
-          setSelectedTenantId(savedTenantId);
-        } else if (list.length > 0) {
-          setSelectedTenantId(list[0].id);
-        }
-      }
-
-      setLoading(false);
-    }
-
-    loadData();
-  }, [router]);
-
-  // Load Context when tenant changes
-  useEffect(() => {
-    async function loadContext() {
-      if (!selectedTenantId) {
-        setTenantContext(null);
-        return;
-      }
-
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) return;
-
-      localStorage.setItem('glauberads_preferred_tenant', selectedTenantId);
-
-      const resContext = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/tenant-context`, {
-        headers: {
-          'Authorization': `Bearer ${data.session.access_token}`,
-          'x-tenant-id': selectedTenantId
-        }
-      });
-
-      if (resContext.ok) {
-        const ctx = await resContext.json();
-        setTenantContext(ctx);
-
-        if (ctx.role === 'OWNER' || ctx.role === 'ADMIN') {
-          const resMemberships = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships`, {
-            headers: {
-              'Authorization': `Bearer ${data.session.access_token}`,
-              'x-tenant-id': selectedTenantId
-            }
-          });
-          if (resMemberships.ok) {
-            setMemberships(await resMemberships.json());
-          }
-
-          const resInvitations = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations`, {
-            headers: {
-              'Authorization': `Bearer ${data.session.access_token}`,
-              'x-tenant-id': selectedTenantId
-            }
-          });
-          if (resInvitations.ok) {
-            setInvitations(await resInvitations.json());
-          }
-        } else {
-          setMemberships([]);
-          setInvitations([]);
-        }
-      } else {
-        setTenantContext(null);
-        setMemberships([]);
-        setInvitations([]);
-      }
-    }
-    loadContext();
-  }, [selectedTenantId]);
-
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push('/login');
-  }
+  const stats = useMemo(() => ({ total: contents.length, draft: contents.filter((item) => item.status === 'DRAFT').length, ready: contents.filter((item) => item.status === 'READY' || item.status === 'APPROVED').length, archived: contents.filter((item) => item.status === 'ARCHIVED').length }), [contents]);
+  const canManage = tenantContext?.role === 'OWNER' || tenantContext?.role === 'ADMIN';
+  const firstName = profile?.email?.split('@')[0]?.split(/[._-]/)[0] || 'criador';
 
   async function handleCreateTenant() {
-    if (!newTenantName) return;
-
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) return;
-
-    const slug = newTenantName.toLowerCase().replace(/\s+/g, '-');
-
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/tenants`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${data.session.access_token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ name: newTenantName, slug })
-    });
-
-    if (res.ok) {
-      const tenant = await res.json();
-      setTenants([...tenants, tenant]);
-      setNewTenantName('');
-      setSelectedTenantId(tenant.id); // Auto-select new tenant
-    } else {
-      if (res.status === 409) {
-        alert('Este nome/slug já está em uso.');
-      } else {
-        alert('Erro ao criar workspace.');
-      }
-    }
-  }
-
-  async function loadMemberships() {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session || !selectedTenantId) return;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships`, {
-      headers: {
-        'Authorization': `Bearer ${data.session.access_token}`,
-        'x-tenant-id': selectedTenantId
-      }
-    });
-    if (res.ok) setMemberships(await res.json());
-  }
-
-  async function loadInvitations() {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session || !selectedTenantId) return;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations`, {
-      headers: {
-        'Authorization': `Bearer ${data.session.access_token}`,
-        'x-tenant-id': selectedTenantId
-      }
-    });
-    if (res.ok) setInvitations(await res.json());
+    const name = newTenantName.trim();
+    if (!name) return;
+    setNotice('');
+    const response = await authorizedFetch('/tenants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, slug: name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') }) });
+    if (!response.ok) { setNotice(response.status === 409 ? 'Este nome de workspace já está em uso.' : 'Não foi possível criar o workspace.'); return; }
+    const tenant = await response.json();
+    await refreshWorkspaces();
+    setActiveWorkspaceId(tenant.id);
+    setNewTenantName('');
+    setNotice('Workspace criado com sucesso.');
   }
 
   async function handleChangeRole(membershipId: string, role: string) {
-    const { data } = await supabase.auth.getSession();
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships/${membershipId}/role`, {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${data.session?.access_token}`,
-        'x-tenant-id': selectedTenantId!,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ role })
-    });
-    if (res.ok) {
-      alert('Role alterada.');
-      loadMemberships();
-    } else {
-      alert('Erro ao alterar role.');
-    }
+    const response = await authorizedFetch(`/memberships/${membershipId}/role`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+    setNotice(response.ok ? 'Permissão atualizada.' : 'Não foi possível atualizar a permissão.');
+    if (response.ok) loadMemberships();
   }
 
   async function handleChangeStatus(membershipId: string, status: string) {
-    const { data } = await supabase.auth.getSession();
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships/${membershipId}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${data.session?.access_token}`,
-        'x-tenant-id': selectedTenantId!,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ status })
-    });
-    if (res.ok) {
-      alert('Status alterado.');
-      loadMemberships();
-    } else {
-      alert('Erro ao alterar status.');
-    }
+    const response = await authorizedFetch(`/memberships/${membershipId}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    setNotice(response.ok ? 'Status do membro atualizado.' : 'Não foi possível atualizar o status.');
+    if (response.ok) loadMemberships();
   }
 
   async function handleRemove(membershipId: string) {
-    if (!confirm('Deseja realmente remover?')) return;
-    const { data } = await supabase.auth.getSession();
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/memberships/${membershipId}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${data.session?.access_token}`,
-        'x-tenant-id': selectedTenantId!
-      }
-    });
-    if (res.ok) {
-      alert('Membro removido.');
-      loadMemberships();
-    } else {
-      alert('Erro ao remover membro.');
-    }
+    if (!window.confirm('Deseja realmente remover este membro?')) return;
+    const response = await authorizedFetch(`/memberships/${membershipId}`, { method: 'DELETE' });
+    setNotice(response.ok ? 'Membro removido.' : 'Não foi possível remover o membro.');
+    if (response.ok) loadMemberships();
   }
 
   async function handleInvite() {
-    if (!newInviteEmail) return;
-    const { data } = await supabase.auth.getSession();
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${data.session?.access_token}`,
-        'x-tenant-id': selectedTenantId!,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ email: newInviteEmail, role: newInviteRole })
-    });
-    if (res.ok) {
-      const inviteData = await res.json();
-      alert('Convite criado com sucesso!');
-      if (inviteData.rawToken) {
-        setLastInviteLink(`${window.location.origin}/convite/aceitar?token=${inviteData.rawToken}`);
-      }
-      setNewInviteEmail('');
-      loadInvitations();
-    } else {
-      if (res.status === 409) alert('Já existe convite pendente para este e-mail.');
-      else alert('Erro ao criar convite.');
-    }
+    if (!newInviteEmail.trim()) return;
+    const response = await authorizedFetch('/invitations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newInviteEmail.trim(), role: newInviteRole }) });
+    if (!response.ok) { setNotice(response.status === 409 ? 'Já existe um convite pendente para este e-mail.' : 'Não foi possível criar o convite.'); return; }
+    const invite = await response.json();
+    if (invite.rawToken) setLastInviteLink(`${window.location.origin}/convite/aceitar?token=${invite.rawToken}`);
+    setNewInviteEmail('');
+    setNotice('Convite criado com sucesso.');
+    loadInvitations();
   }
 
   async function handleRevokeInvite(id: string) {
-    if (!confirm('Revogar convite?')) return;
-    const { data } = await supabase.auth.getSession();
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/invitations/${id}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${data.session?.access_token}`,
-        'x-tenant-id': selectedTenantId!
-      }
-    });
-    if (res.ok) {
-      alert('Convite revogado.');
-      loadInvitations();
-    } else {
-      alert('Erro ao revogar.');
-    }
+    if (!window.confirm('Deseja revogar este convite?')) return;
+    const response = await authorizedFetch(`/invitations/${id}`, { method: 'DELETE' });
+    setNotice(response.ok ? 'Convite revogado.' : 'Não foi possível revogar o convite.');
+    if (response.ok) loadInvitations();
   }
 
-  if (loading) return <div className="p-8">Carregando...</div>;
+  if (loading) return <><div className="skeleton" style={{ height: 190, marginBottom: 20 }} /><LoadingSkeleton rows={4} /></>;
+  if (error) return <ErrorState message={error} onRetry={loadDashboard} />;
 
-  return (
-    <div className="p-8 space-y-8 bg-gray-50 min-h-screen text-gray-800">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <button onClick={handleLogout} className="text-sm bg-red-100 text-red-600 px-4 py-2 rounded">
-          Sair
-        </button>
-      </div>
+  return <>
+    <section className="welcome-panel">
+      <div className="welcome-copy"><span>{activeWorkspace?.name || 'Seu workspace'}</span><h1>Olá, {firstName}. Vamos criar algo relevante hoje?</h1><p>Acompanhe seus briefings e mantenha a produção de conteúdo fluindo com clareza.</p></div>
+      <Link href="/dashboard/content/new" className="button"><Icon name="plus" size={18} />Criar conteúdo</Link>
+    </section>
 
-      <div className="bg-white p-6 rounded shadow max-w-xl">
-        <h2 className="text-xl font-semibold mb-4">Perfil Autenticado</h2>
-        <p><strong>ID:</strong> {profile?.id}</p>
-        <p><strong>Email:</strong> {profile?.email}</p>
-      </div>
+    {!activeWorkspaceId ? <section className="section"><EmptyState icon="workspace" title="Crie seu primeiro workspace" description="Você precisa de um workspace para organizar solicitações, equipe e conteúdo." action={<a href="#configuracoes" className="button button-primary">Configurar workspace</a>} /></section> : <>
+      <section className="stats-grid section" aria-label="Resumo das solicitações"><StatCard label="Total de solicitações" value={stats.total} note="Todos os conteúdos do workspace" icon="content" tone="purple" /><StatCard label="Rascunhos" value={stats.draft} note="Briefings ainda em construção" icon="edit" tone="blue" /><StatCard label="Prontas" value={stats.ready} note="Prontas ou aprovadas" icon="check" tone="green" /><StatCard label="Arquivadas" value={stats.archived} note="Itens fora do fluxo ativo" icon="archive" tone="gray" /></section>
 
-      <div className="bg-white p-6 rounded shadow max-w-xl space-y-4">
-        <h2 className="text-xl font-semibold">Meus Workspaces</h2>
+      <section className="section"><div className="section-header"><div><h2 className="section-title">Conteúdos recentes</h2><p className="section-description">As últimas solicitações do workspace ativo.</p></div><Link href="/dashboard/content" className="text-link">Ver todos</Link></div>{contents.length === 0 ? <EmptyState title="Seu calendário começa com um briefing" description="Crie a primeira solicitação para iniciar o fluxo editorial do workspace." action={<Link href="/dashboard/content/new" className="button button-primary"><Icon name="plus" size={17} />Nova solicitação</Link>} /> : <div className="content-list">{contents.slice(0, 4).map((item) => <Link href={`/dashboard/content/${item.id}`} className="content-row" key={item.id}><div className="content-title"><strong>{item.title}</strong><span>Criado em {formatDate(item.createdAt)}</span></div><span className="platform"><Icon name="instagram" size={16} />{formatPlatform(item.platform)}</span><span className="content-status"><StatusBadge status={item.status} /></span><span className="content-date">{formatDate(item.createdAt)}</span><span className="row-action"><Icon name="arrow-right" size={18} /></span></Link>)}</div>}</section>
 
-        {tenants.length > 0 ? (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Selecionar Workspace Ativo:</label>
-            <select
-              value={selectedTenantId || ''}
-              onChange={e => setSelectedTenantId(e.target.value)}
-              className="border p-2 rounded w-full"
-            >
-              <option value="" disabled>Selecione...</option>
-              {tenants.map(t => (
-                <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>
-              ))}
-            </select>
-          </div>
-        ) : (
-          <p className="text-gray-500">Você ainda não tem nenhum workspace.</p>
-        )}
+      <section className="section"><div className="section-header"><div><h2 className="section-title">Como o fluxo funciona</h2><p className="section-description">Uma visão simples das etapas do processo editorial.</p></div></div><div className="card flow-grid"><div className="flow-step"><div className="flow-number">1</div><h3>Criar briefing</h3><p>Registre contexto, objetivo e público.</p></div><div className="flow-step"><div className="flow-number">2</div><h3>Revisar conteúdo</h3><p>Valide se a solicitação está completa.</p></div><div className="flow-step"><div className="flow-number">3</div><h3>Aprovar</h3><p>Alinhe o material com o time.</p></div><div className="flow-step"><div className="flow-number">4</div><h3>Publicar futuramente</h3><p>Etapa planejada para próximos ciclos.</p></div></div></section>
+    </>}
 
-        {!!tenantContext && (
-          <div className="flex-1 p-10">
-            <div className="max-w-4xl mx-auto">
-              <div className="flex justify-between items-center mb-8">
-                <h1 className="text-3xl font-bold text-gray-800 tracking-tight">Dashboard</h1>
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
-                    Tenant ID: {(tenantContext as Record<string, string>).tenantId.substring(0, 8)}...
-                  </span>
-                  <span className="text-sm font-medium text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
-                    Role: {(tenantContext as Record<string, string>).role}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center mt-8">
-                <h2 className="text-xl font-semibold text-gray-800 mb-2">Bem-vindo(a) ao seu Workspace</h2>
-                <p className="text-gray-500">
-                  O isolamento de dados via TenantContext e AsyncLocalStorage está ativo e validado sob alta concorrência.
-                </p>
-              </div>
+    <section className="section" id="equipe"><div className="section-header"><div><h2 className="section-title">Equipe</h2><p className="section-description">Gerencie acessos e convites do workspace.</p></div>{tenantContext && <StatusBadge status={tenantContext.role} />}</div>{!canManage ? <div className="notice notice-info">Seu perfil pode visualizar o workspace, mas apenas Owner e Admin gerenciam equipe e convites.</div> : <div className="dashboard-columns"><div className="card"><div className="card-body"><h3 className="section-title">Membros</h3><div className="table-scroll" style={{ marginTop: 15 }}><table className="data-table"><thead><tr><th>E-mail</th><th>Permissão</th><th>Status</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>{memberships.map((member) => <tr key={member.id}><td>{member.email}</td><td><select className="select" value={member.role} onChange={(event) => handleChangeRole(member.id, event.target.value)}><option value="OWNER">Owner</option><option value="ADMIN">Admin</option><option value="MEMBER">Membro</option><option value="VIEWER">Leitor</option></select></td><td><select className="select" value={member.status} onChange={(event) => handleChangeStatus(member.id, event.target.value)}><option value="ACTIVE">Ativo</option><option value="SUSPENDED">Suspenso</option></select></td><td><button className="button button-danger button-sm icon-button" onClick={() => handleRemove(member.id)} aria-label={`Remover ${member.email}`}><Icon name="trash" size={16} /></button></td></tr>)}</tbody></table></div>{memberships.length === 0 && <p className="section-description">Nenhum membro disponível.</p>}</div></div><div className="card"><div className="card-body"><h3 className="section-title">Convidar pessoa</h3><p className="section-description">Envie um acesso com a permissão adequada.</p><div className="field" style={{ marginTop: 16 }}><label className="field-label" htmlFor="invite-email">E-mail</label><input id="invite-email" className="input" type="email" value={newInviteEmail} onChange={(event) => setNewInviteEmail(event.target.value)} placeholder="pessoa@empresa.com" /></div><div className="field" style={{ marginTop: 12 }}><label className="field-label" htmlFor="invite-role">Permissão</label><select id="invite-role" className="select" value={newInviteRole} onChange={(event) => setNewInviteRole(event.target.value)}><option value="ADMIN">Admin</option><option value="MEMBER">Membro</option><option value="VIEWER">Leitor</option></select></div><button className="button button-primary" onClick={handleInvite} style={{ width: '100%', marginTop: 15 }}><Icon name="send" size={16} />Enviar convite</button></div></div></div>}{canManage && invitations.length > 0 && <div className="card section"><div className="card-body"><h3 className="section-title">Convites pendentes</h3><div className="table-scroll" style={{ marginTop: 15 }}><table className="data-table"><thead><tr><th>E-mail</th><th>Permissão</th><th>Status</th><th>Expira em</th><th></th></tr></thead><tbody>{invitations.map((invite) => <tr key={invite.id}><td>{invite.email}</td><td>{invite.role}</td><td><StatusBadge status={invite.status} /></td><td>{formatDate(invite.expiresAt)}</td><td>{invite.status === 'PENDING' && <button className="button button-danger button-sm" onClick={() => handleRevokeInvite(invite.id)}>Revogar</button>}</td></tr>)}</tbody></table></div></div></div>}{lastInviteLink && <div className="notice notice-info section"><strong>Link local do convite:</strong> <a className="text-link" href={lastInviteLink} target="_blank" rel="noreferrer">Abrir convite <Icon name="external" size={13} /></a></div>}</section>
 
-              <div className="mt-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                  <h3 className="text-lg font-semibold text-gray-800">Membros da Equipe</h3>
-                  <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
-                    (Gestão RBAC Integrada)
-                  </span>
-                </div>
-                <div className="p-6">
-                  {memberships.length > 0 ? (
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="py-2">Email</th>
-                          <th className="py-2">Role</th>
-                          <th className="py-2">Status</th>
-                          <th className="py-2">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {memberships.map((m: unknown) => {
-                          const member = m as Record<string, string>;
-                          const ctx = tenantContext as Record<string, string>;
-                          return (
-                          <tr key={member.id as string} className="border-b">
-                            <td className="py-2">{member.email as string}</td>
-                            <td className="py-2">
-                              <select 
-                                onChange={(e) => handleChangeRole(member.id as string, e.target.value)}
-                                disabled={ctx.role === 'MEMBER' || ctx.role === 'VIEWER'}
-                                className="border rounded p-1"
-                              >
-                                <option value="OWNER">OWNER</option>
-                                <option value="ADMIN">ADMIN</option>
-                                <option value="MEMBER">MEMBER</option>
-                                <option value="VIEWER">VIEWER</option>
-                              </select>
-                            </td>
-                            <td className="py-2">
-                              {member.status as string}
-                            </td>
-                            <td className="py-2 space-x-2">
-                              {(ctx.role === 'OWNER' || ctx.role === 'ADMIN') && (
-                                <>
-                                  {member.status === 'ACTIVE' ? (
-                                    <button onClick={() => handleChangeStatus(member.id as string, 'SUSPENDED')} className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">Suspender</button>
-                                  ) : (
-                                    <button onClick={() => handleChangeStatus(member.id as string, 'ACTIVE')} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Reativar</button>
-                                  )}
-                                  <button onClick={() => handleRemove(member.id as string)} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Remover</button>
-                                </>
-                              )}
-                            </td>
-                          </tr>
-                        )})}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p className="text-sm text-gray-500 text-center">
-                      Você não tem permissão para gerenciar memberships, ou não há membros.
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="mt-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                  <h3 className="text-lg font-semibold text-gray-800">Convites Pendentes</h3>
-                </div>
-                <div className="p-6">
-                  {((tenantContext as Record<string, string>).role === 'OWNER' || (tenantContext as Record<string, string>).role === 'ADMIN') ? (
-                    <>
-                      <div className="mb-4 flex gap-2 items-center">
-                        <input
-                          type="email"
-                          placeholder="Email do convite"
-                          value={newInviteEmail}
-                          onChange={e => setNewInviteEmail(e.target.value)}
-                          className="border p-2 rounded flex-1"
-                        />
-                        <select
-                          value={newInviteRole}
-                          onChange={e => setNewInviteRole(e.target.value)}
-                          className="border p-2 rounded"
-                        >
-                          <option value="OWNER">OWNER</option>
-                          <option value="ADMIN">ADMIN</option>
-                          <option value="MEMBER">MEMBER</option>
-                          <option value="VIEWER">VIEWER</option>
-                        </select>
-                        <button onClick={handleInvite} className="bg-indigo-600 text-white px-4 py-2 rounded">Convidar</button>
-                      </div>
-                      {lastInviteLink && (
-                        <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-sm break-all">
-                          <strong>Modo Local - Link do Convite (Copie agora): </strong>
-                          <a href={lastInviteLink} target="_blank" rel="noreferrer" className="underline">{lastInviteLink}</a>
-                        </div>
-                      )}
-                      {invitations.length > 0 ? (
-                        <table className="w-full text-left">
-                          <thead>
-                            <tr className="border-b">
-                              <th className="py-2">Email</th>
-                              <th className="py-2">Role</th>
-                              <th className="py-2">Status</th>
-                              <th className="py-2">Expira em</th>
-                              <th className="py-2">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {invitations.map((inv: unknown) => {
-                              const invite = inv as Record<string, string>;
-                              return (
-                              <tr key={invite.id} className="border-b">
-                                <td className="py-2">{invite.email}</td>
-                                <td className="py-2">{invite.role}</td>
-                                <td className="py-2">{invite.status}</td>
-                                <td className="py-2">{new Date(invite.expiresAt).toLocaleDateString()}</td>
-                                <td className="py-2 space-x-2">
-                                  {invite.status === 'PENDING' && (
-                                    <button onClick={() => handleRevokeInvite(invite.id as string)} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Revogar</button>
-                                  )}
-                                </td>
-                              </tr>
-                            )})}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <p className="text-sm text-gray-500">Nenhum convite na lista.</p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-gray-500 text-center">Apenas Owner e Admin podem gerenciar convites.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="pt-4 border-t">
-          <h3 className="text-lg font-medium mb-2">Criar Novo Workspace</h3>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Nome do Workspace"
-              value={newTenantName}
-              onChange={e => setNewTenantName(e.target.value)}
-              className="border p-2 rounded flex-1"
-            />
-            <button
-              onClick={handleCreateTenant}
-              className="bg-blue-600 text-white px-4 py-2 rounded"
-            >
-              Criar
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+    <section className="section" id="configuracoes"><div className="section-header"><div><h2 className="section-title">Configurações do workspace</h2><p className="section-description">Crie um novo espaço para outra marca ou equipe.</p></div></div><div className="card workspace-card"><div className="inline-form"><label className="sr-only" htmlFor="workspace-name">Nome do novo workspace</label><input id="workspace-name" className="input" value={newTenantName} onChange={(event) => setNewTenantName(event.target.value)} placeholder="Nome do novo workspace" /><button className="button button-primary" onClick={handleCreateTenant}><Icon name="plus" size={17} />Criar workspace</button></div>{notice && <div className={`notice ${notice.includes('sucesso') || notice.includes('atualizad') || notice.includes('removido') || notice.includes('revogado') ? 'notice-success' : 'notice-error'}`} role="status" style={{ marginTop: 14 }}>{notice}</div>}</div></section>
+  </>;
 }

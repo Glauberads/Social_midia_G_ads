@@ -1,135 +1,93 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '../../../lib/apiClient';
+import { useWorkspace } from '../../../components/AppShell';
+import { Icon } from '../../../components/Icon';
+import { ConfirmDialog, ErrorState, FormField, LoadingSkeleton, PageHeader, PlatformSelector, StatusBadge, formatDate, formatPlatform, safeErrorMessage } from '../../../components/ui';
 
-export default function ContentDetailsPage({ params }: { params: { id: string } }) {
+interface ContentRequest {
+  id: string;
+  title: string;
+  briefing: string;
+  objective: string | null;
+  audience: string | null;
+  tone: string | null;
+  platform: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  createdById: string;
+}
+
+export default function ContentDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
-  const { id } = params;
-  const [data, setData] = useState<any>(null);
+  const { id } = use(params);
+  const { activeWorkspaceId } = useWorkspace();
+  const [data, setData] = useState<ContentRequest | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState('');
-
+  const [feedback, setFeedback] = useState('');
   const [editMode, setEditMode] = useState(false);
-  const [form, setForm] = useState({ title: '', briefing: '', platform: '' });
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({ title: '', briefing: '', objective: '', audience: '', tone: '', platform: 'INSTAGRAM_FEED' });
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const reqData = await apiClient(`/content-requests/${id}`);
-        setData(reqData);
-        setForm({ title: reqData.title, briefing: reqData.briefing, platform: reqData.platform });
-      } catch (err: any) {
-        setError(err.message || 'Erro ao carregar detalhes');
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, [id]);
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    setData(null);
     try {
-      const res = await apiClient(`/content-requests/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(form)
-      });
-      setData(res);
-      setEditMode(false);
-    } catch (err: any) {
-      alert(err.message || 'Erro ao atualizar');
-    }
+      const request: ContentRequest = await apiClient(`/content-requests/${id}`);
+      setData(request);
+      setForm({ title: request.title, briefing: request.briefing, objective: request.objective || '', audience: request.audience || '', tone: request.tone || '', platform: request.platform });
+    } catch (loadError) { setError(safeErrorMessage(loadError, 'Não foi possível carregar os detalhes da solicitação.')); }
+    finally { setLoading(false); }
+  }, [activeWorkspaceId, id]);
+
+  useEffect(() => { load(); }, [load]);
+  function update(field: keyof typeof form, value: string) { setForm((current) => ({ ...current, [field]: value })); setEditErrors((current) => ({ ...current, [field]: '' })); }
+
+  const handleUpdate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    const nextErrors: Record<string, string> = {};
+    if (!form.title.trim()) nextErrors.title = 'Informe um título para identificar a solicitação.';
+    if (!form.briefing.trim()) nextErrors.briefing = 'Descreva o briefing da solicitação.';
+    else if (form.briefing.trim().length < 10) nextErrors.briefing = 'O briefing precisa ter ao menos 10 caracteres.';
+    setEditErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    setSaving(true);
+    setError('');
+    setFeedback('');
+    try { const response = await apiClient(`/content-requests/${id}`, { method: 'PATCH', body: JSON.stringify(form) }); setData(response); setEditMode(false); setFeedback('Alterações salvas com sucesso.'); }
+    catch (updateError) { setError(safeErrorMessage(updateError, 'Não foi possível atualizar a solicitação.')); }
+    finally { setSaving(false); }
   };
 
   const handleArchive = async () => {
-    if (!confirm('Deseja realmente arquivar esta solicitação?')) return;
-    try {
-      await apiClient(`/content-requests/${id}/archive`, { method: 'POST' });
-      router.push('/dashboard/content');
-    } catch (err: any) {
-      alert(err.message || 'Erro ao arquivar');
-    }
+    if (archiving) return;
+    setArchiving(true);
+    setError('');
+    try { await apiClient(`/content-requests/${id}/archive`, { method: 'POST' }); setData((current) => current ? { ...current, status: 'ARCHIVED' } : current); setFeedback('Solicitação arquivada com sucesso.'); setConfirmOpen(false); }
+    catch (archiveError) { setError(safeErrorMessage(archiveError, 'Não foi possível arquivar a solicitação.')); setConfirmOpen(false); }
+    finally { setArchiving(false); }
   };
 
-  if (loading) return <div className="p-8">Carregando...</div>;
-  if (error) return <div className="p-8 text-red-500">{error}</div>;
-  if (!data) return <div className="p-8">Não encontrado</div>;
-
+  if (loading) return <><div className="skeleton" style={{ height: 120, marginBottom: 18 }} /><LoadingSkeleton rows={3} /></>;
+  if (error && !data) return <ErrorState message={error} onRetry={load} />;
+  if (!data) return <ErrorState message="A solicitação não foi encontrada." />;
   const canEdit = data.status === 'DRAFT' || data.status === 'REJECTED';
 
-  return (
-    <div className="p-8 max-w-3xl mx-auto space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Detalhes da Solicitação</h1>
-        <button onClick={() => router.push('/dashboard/content')} className="text-blue-600 underline">
-          Voltar
-        </button>
-      </div>
-
-      <div className="bg-white p-6 shadow rounded space-y-4">
-        {editMode ? (
-          <form onSubmit={handleUpdate} className="space-y-4">
-            <div>
-              <label className="block font-medium">Título</label>
-              <input
-                className="w-full border p-2 rounded"
-                value={form.title}
-                onChange={e => setForm({...form, title: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="block font-medium">Briefing</label>
-              <textarea
-                className="w-full border p-2 rounded"
-                rows={4}
-                value={form.briefing}
-                onChange={e => setForm({...form, briefing: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="block font-medium">Plataforma</label>
-              <select
-                className="w-full border p-2 rounded"
-                value={form.platform}
-                onChange={e => setForm({...form, platform: e.target.value})}
-              >
-                <option value="INSTAGRAM_FEED">Instagram Feed</option>
-                <option value="INSTAGRAM_STORY">Instagram Story</option>
-                <option value="INSTAGRAM_REEL">Instagram Reel</option>
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded">Salvar</button>
-              <button type="button" onClick={() => setEditMode(false)} className="bg-gray-200 px-4 py-2 rounded">Cancelar</button>
-            </div>
-          </form>
-        ) : (
-          <div>
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h2 className="text-xl font-semibold">{data.title}</h2>
-                <p className="text-sm text-gray-500">Status: {data.status} | Plataforma: {data.platform}</p>
-              </div>
-              <div className="flex gap-2">
-                {canEdit && <button onClick={() => setEditMode(true)} className="bg-gray-100 px-3 py-1 rounded">Editar</button>}
-                <button onClick={handleArchive} className="bg-red-100 text-red-600 px-3 py-1 rounded">Arquivar</button>
-              </div>
-            </div>
-            <div className="bg-gray-50 p-4 rounded whitespace-pre-wrap">
-              <strong>Briefing:</strong><br />{data.briefing}
-            </div>
-            {(data.objective || data.audience || data.tone) && (
-              <div className="grid grid-cols-3 gap-4 mt-4 text-sm">
-                {data.objective && <div><strong>Objetivo:</strong> {data.objective}</div>}
-                {data.audience && <div><strong>Público:</strong> {data.audience}</div>}
-                {data.tone && <div><strong>Tom:</strong> {data.tone}</div>}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <>
+    <PageHeader eyebrow="Detalhes da solicitação" title={data.title} description={`${formatPlatform(data.platform)} · Criado em ${formatDate(data.createdAt)}`} actions={<><button className="button button-secondary" onClick={() => router.push('/dashboard/content')}><Icon name="arrow-left" size={17} />Voltar</button>{canEdit && !editMode && <button className="button button-secondary" onClick={() => setEditMode(true)}><Icon name="edit" size={16} />Editar</button>}{data.status !== 'ARCHIVED' && <button className="button button-danger" onClick={() => setConfirmOpen(true)}><Icon name="archive" size={16} />Arquivar</button>}</>} />
+    <div style={{ marginBottom: 18 }}><StatusBadge status={data.status} /></div>
+    {feedback && <div className="notice notice-success" role="status" style={{ marginBottom: 18 }}>{feedback}</div>}
+    {error && <div className="notice notice-error" role="alert" style={{ marginBottom: 18 }}>{error}</div>}
+    {editMode ? <form className="card form-card" onSubmit={handleUpdate} noValidate><section className="form-section"><div className="form-section-header"><h2>Editar solicitação</h2><p>Atualize as informações do briefing enquanto ele está em um status editável.</p></div><div className="form-grid"><div className="form-span-2"><FormField id="edit-title" label="Título" error={editErrors.title} count={`${form.title.length} caracteres`}><input id="edit-title" className="input" value={form.title} onChange={(event) => update('title', event.target.value)} required aria-invalid={Boolean(editErrors.title)} aria-describedby="edit-title-help" /></FormField></div><div className="form-span-2"><FormField id="edit-briefing" label="Briefing" hint="Mínimo de 10 caracteres." error={editErrors.briefing} count={`${form.briefing.length} caracteres`}><textarea id="edit-briefing" className="textarea" value={form.briefing} onChange={(event) => update('briefing', event.target.value)} rows={7} required aria-invalid={Boolean(editErrors.briefing)} aria-describedby="edit-briefing-help" /></FormField></div><FormField id="edit-objective" label="Objetivo"><input id="edit-objective" className="input" value={form.objective} onChange={(event) => update('objective', event.target.value)} /></FormField><FormField id="edit-audience" label="Público-alvo"><input id="edit-audience" className="input" value={form.audience} onChange={(event) => update('audience', event.target.value)} /></FormField><div className="form-span-2"><FormField id="edit-tone" label="Tom de voz"><input id="edit-tone" className="input" value={form.tone} onChange={(event) => update('tone', event.target.value)} /></FormField></div></div></section><section className="form-section"><div className="form-section-header"><h2>Plataforma</h2></div><PlatformSelector value={form.platform} onChange={(value) => update('platform', value)} name="edit-platform" /></section><footer className="form-actions"><button className="button button-secondary" type="button" onClick={() => setEditMode(false)} disabled={saving}>Cancelar</button><button className="button button-primary" type="submit" disabled={saving}>{saving ? 'Salvando...' : <><Icon name="check" size={17} />Salvar alterações</>}</button></footer></form> : <div className="details-grid"><div className="details-main"><section className="card detail-block"><div className="detail-label"><Icon name="brief" size={15} />Briefing</div><p className="detail-value">{data.briefing}</p></section><section className="card detail-block"><div className="detail-label"><Icon name="sparkles" size={15} />Objetivo</div><p className="detail-value">{data.objective || 'Não informado'}</p></section><div className="form-grid"><section className="card detail-block"><div className="detail-label"><Icon name="team" size={15} />Público-alvo</div><p className="detail-value">{data.audience || 'Não informado'}</p></section><section className="card detail-block"><div className="detail-label"><Icon name="send" size={15} />Tom de voz</div><p className="detail-value">{data.tone || 'Não informado'}</p></section></div>{data.status === 'ARCHIVED' && <div className="notice notice-info"><strong>Modo somente leitura.</strong> Esta solicitação foi arquivada e não pode mais ser editada.</div>}</div><aside className="details-side"><section className="card meta-list"><div className="meta-item"><span>Status</span><StatusBadge status={data.status} /></div><div className="meta-item"><span>Plataforma</span><strong>{formatPlatform(data.platform)}</strong></div><div className="meta-item"><span>Criado em</span><strong>{formatDate(data.createdAt)}</strong></div><div className="meta-item"><span>Atualizado em</span><strong>{formatDate(data.updatedAt)}</strong></div><div className="meta-item"><span>Autor</span><strong title={data.createdById}>{data.createdById ? `${data.createdById.slice(0, 8)}…` : '—'}</strong></div></section></aside></div>}
+    <ConfirmDialog open={confirmOpen} title="Arquivar solicitação?" description="Ela sairá do fluxo ativo e passará a ser exibida em modo somente leitura." confirmLabel="Arquivar solicitação" loading={archiving} onConfirm={handleArchive} onCancel={() => setConfirmOpen(false)} />
+  </>;
 }
