@@ -38,6 +38,6 @@ describe('ListUserTenantsUseCase', () => {
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('tenant-123');
     expect(result[0].membership.role).toBe('OWNER');
-    expect(mockTenantRepo.findUserTenants).toHaveBeenCalledWith('user-123');
+    expect(mockTenantRepo.findUserTenants).toHaveBeenCalledWith('user-123', {});
   });
 });

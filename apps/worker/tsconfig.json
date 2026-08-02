@@ -3,6 +3,9 @@
     "target": "ES2022",
     "module": "CommonJS",
     "outDir": "./dist",
-    "strict": true
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "moduleResolution": "node"
   }
 }

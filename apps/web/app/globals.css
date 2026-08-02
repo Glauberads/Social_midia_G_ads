@@ -200,6 +200,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .badge-rejected { color: var(--danger); background: var(--danger-soft); }
 .badge-archived { color: #667085; background: #eef0f4; }
 .badge-pending { color: var(--warning); background: var(--warning-soft); }
+.badge-submitted, .badge-generating { color: var(--warning); background: var(--warning-soft); }
+.badge-failed { color: var(--danger); background: var(--danger-soft); }
 .content-list { display: grid; gap: 10px; }
 .content-row { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(130px, .8fr) minmax(110px, .7fr) minmax(110px, .7fr) auto; align-items: center; gap: 18px; min-height: 78px; padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 .content-row:hover { transform: translateY(-1px); border-color: #d7d2ff; box-shadow: var(--shadow-sm); }

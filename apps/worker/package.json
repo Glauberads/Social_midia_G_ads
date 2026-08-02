@@ -2,16 +2,28 @@
   "name": "worker",
   "version": "1.0.0",
   "scripts": {
-    "build": "tsc",
+        "dev": "tsx watch src/index.ts",
+        "start": "node dist/index.js",
+        "build": "tsc",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+        "test": "jest",
+        "test:e2e": "tsx test/local-e2e.script.ts"
   },
-  "devDependencies": {
+    "dependencies": {
+        "@projeto/database": "workspace:*",
+        "bullmq": "^5.58.5",
+        "dotenv": "^17.2.1",
+        "ioredis": "^5.7.0",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
     "typescript": "^5.0.0",
     "eslint": "^8.0.0",
     "jest": "^29.0.0",
     "@types/jest": "^29.0.0",
-    "ts-jest": "^29.0.0"
+        "ts-jest": "^29.0.0",
+        "tsx": "^4.20.3"
   }
 }

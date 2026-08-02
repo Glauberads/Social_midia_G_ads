@@ -25,7 +25,7 @@ export function StatCard({ label, value, note, icon, tone = 'purple' }: { label:
   );
 }
 
-const statusLabels: Record<string, string> = { DRAFT: 'Rascunho', READY: 'Pronto', APPROVED: 'Aprovado', REJECTED: 'Rejeitado', ARCHIVED: 'Arquivado', PENDING: 'Pendente' };
+const statusLabels: Record<string, string> = { DRAFT: 'Rascunho', SUBMITTED: 'Enviado', GENERATING: 'Gerando', READY: 'Pronto', APPROVED: 'Aprovado', REJECTED: 'Rejeitado', FAILED: 'Falhou', ARCHIVED: 'Arquivado', PENDING: 'Pendente' };
 export function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status.toLowerCase()}`}>{statusLabels[status] || status}</span>;
 }

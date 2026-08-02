@@ -40,10 +40,11 @@ model UserProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships       Membership[]
-  sentInvitations   Invitation[] @relation("Inviter")
-  acceptedInvitations Invitation[] @relation("InvitationAcceptedBy")
-  contentRequests   ContentRequest[]
+  memberships          Membership[]
+  sentInvitations      Invitation[]        @relation("Inviter")
+  acceptedInvitations  Invitation[]        @relation("InvitationAcceptedBy")
+  contentRequests      ContentRequest[]
+  requestedGenerations ContentGeneration[] @relation("GenerationRequester")
 }
 
 model Tenant {
@@ -55,9 +56,11 @@ model Tenant {
   updatedAt DateTime     @updatedAt
   deletedAt DateTime?
 
-  memberships Membership[]
-  invitations Invitation[]
-  contentRequests ContentRequest[]
+  memberships        Membership[]
+  invitations        Invitation[]
+  contentRequests    ContentRequest[]
+  contentGenerations ContentGeneration[]
+  generatedContents  GeneratedContent[]
 }
 
 model Membership {
@@ -86,18 +89,18 @@ model Invitation {
   status    InvitationStatus @default(PENDING)
   tokenHash String           @unique
 
-  tenantId    String @db.Uuid
-  invitedById String @db.Uuid
+  tenantId     String  @db.Uuid
+  invitedById  String  @db.Uuid
   acceptedById String? @db.Uuid
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  expiresAt DateTime
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  expiresAt  DateTime
   acceptedAt DateTime?
-  revokedAt DateTime?
+  revokedAt  DateTime?
 
-  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  invitedBy UserProfile @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invitedBy  UserProfile  @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
   acceptedBy UserProfile? @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
 }
 
@@ -136,26 +139,84 @@ enum ContentPlatform {
   INSTAGRAM_REEL
 }
 
+enum GenerationStatus {
+  QUEUED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
 model ContentRequest {
-  id          String          @id @default(uuid()) @db.Uuid
-  tenantId    String          @db.Uuid
-  createdById String          @db.Uuid
+  id          String @id @default(uuid()) @db.Uuid
+  tenantId    String @db.Uuid
+  createdById String @db.Uuid
 
-  title       String
-  briefing    String          @db.Text
-  objective   String?         @db.Text
-  audience    String?         @db.Text
-  tone        String?
-  platform    ContentPlatform
-  status      ContentStatus   @default(DRAFT)
+  title     String
+  briefing  String          @db.Text
+  objective String?         @db.Text
+  audience  String?         @db.Text
+  tone      String?
+  platform  ContentPlatform
+  status    ContentStatus   @default(DRAFT)
 
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdBy   UserProfile     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  tenant            Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy         UserProfile         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  generations       ContentGeneration[]
+  generatedContents GeneratedContent[]
 
   @@index([tenantId, createdAt])
   @@index([tenantId, status])
   @@index([createdById])
+}
+
+model ContentGeneration {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @db.Uuid
+  contentRequestId String           @db.Uuid
+  requestedById    String           @db.Uuid
+  status           GenerationStatus @default(QUEUED)
+  provider         String
+  model            String
+  promptVersion    String
+  attempt          Int              @default(0)
+  idempotencyKey   String           @unique
+  errorCode        String?
+  errorMessage     String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  contentRequest   ContentRequest    @relation(fields: [contentRequestId], references: [id], onDelete: Restrict)
+  requestedBy      UserProfile       @relation("GenerationRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  generatedContent GeneratedContent?
+
+  @@index([tenantId, status])
+  @@index([tenantId, contentRequestId, createdAt])
+  @@index([contentRequestId, status])
+}
+
+model GeneratedContent {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @db.Uuid
+  contentRequestId String   @db.Uuid
+  generationId     String   @unique @db.Uuid
+  caption          String   @db.Text
+  callToAction     String   @db.Text
+  hashtags         String[]
+  version          Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  contentRequest ContentRequest    @relation(fields: [contentRequestId], references: [id], onDelete: Restrict)
+  generation     ContentGeneration @relation(fields: [generationId], references: [id], onDelete: Restrict)
+
+  @@unique([contentRequestId, version])
+  @@index([tenantId, contentRequestId])
+  @@index([tenantId, createdAt])
 }

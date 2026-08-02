@@ -14,6 +14,11 @@ export const envSchema = z.object({
   SUPABASE_JWKS_URL: z.string().url().optional(),
   SUPABASE_JWT_VERIFICATION_MODE: z.enum(['jwks', 'auth-server']).default('jwks'),
   SUPABASE_ALLOWED_ALGORITHMS: z.string().default('ES256,RS256'),
+  REDIS_URL: z.string().url().default('redis://127.0.0.1:6379'),
+  QUEUE_PREFIX: z.string().min(1).default('glauberads:development'),
+  GENERATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+  AI_PROVIDER: z.enum(['fake', 'openai-compatible']).default('fake'),
+  AI_MODEL: z.string().min(1).default('fake-v1'),
 }).superRefine((data, ctx) => {
   if (data.NODE_ENV === 'production') {
     if (data.INVITATION_EXPOSE_RAW_TOKEN) {

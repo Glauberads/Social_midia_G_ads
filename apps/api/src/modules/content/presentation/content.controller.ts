@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Patch, Body, Param, Req, UseGuards, Query } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Body, Param, Req, UseGuards, Query, HttpCode, HttpStatus } from '@nestjs/common';
 import { CreateContentRequestUseCase } from '../application/use-cases/create-content-request.use-case';
 import { ListContentRequestsUseCase } from '../application/use-cases/list-content-requests.use-case';
 import { GetContentRequestUseCase } from '../application/use-cases/get-content-request.use-case';
@@ -9,6 +9,7 @@ import { UpdateContentDto } from './dtos/update-content.dto';
 import { RbacGuard } from '../../auth/guards/rbac.guard';
 import { RequireRoles } from '../../auth/decorators/require-roles.decorator';
 import { TenantScoped } from '../../auth/decorators/tenant-scoped.decorator';
+import { SubmitContentRequestUseCase } from '../application/use-cases/submit-content-request.use-case';
 
 @Controller('content-requests')
 @TenantScoped()
@@ -19,6 +20,7 @@ export class ContentController {
     private readonly getUseCase: GetContentRequestUseCase,
     private readonly updateUseCase: UpdateContentRequestUseCase,
     private readonly archiveUseCase: ArchiveContentRequestUseCase,
+    private readonly submitUseCase: SubmitContentRequestUseCase,
   ) {}
 
   @Post()
@@ -30,6 +32,22 @@ export class ContentController {
       userId: req.user.userId,
       ...dto,
     });
+  }
+
+  @Post(':id/submit')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(RbacGuard)
+  @RequireRoles('OWNER', 'ADMIN', 'MEMBER')
+  async submit(@Req() req: any, @Param('id') id: string) {
+    return this.submitUseCase.execute({ contentRequestId: id, tenantId: req.tenantScope.tenantId, userId: req.user.userId, requestId: req.requestId });
+  }
+
+  @Post(':id/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(RbacGuard)
+  @RequireRoles('OWNER', 'ADMIN', 'MEMBER')
+  async retry(@Req() req: any, @Param('id') id: string) {
+    return this.submitUseCase.execute({ contentRequestId: id, tenantId: req.tenantScope.tenantId, userId: req.user.userId, requestId: req.requestId, retryFailed: true });
   }
 
   @Get()

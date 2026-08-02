@@ -15,6 +15,8 @@ describe('ContentRequests (e2e)', () => {
   let ownerId: string;
   let memberId: string;
   let createdContentId: string;
+  let submissionContentId: string;
+  let secondTenantId: string;
 
   const generateToken = async (email: string) => {
     let anonKey = '';
@@ -50,6 +52,8 @@ describe('ContentRequests (e2e)', () => {
     prisma = app.get<PrismaService>(PrismaService);
 
     // Clean up
+    await prisma.generatedContent.deleteMany({});
+    await prisma.contentGeneration.deleteMany({});
     await prisma.contentRequest.deleteMany({});
     await prisma.membership.deleteMany({});
     await prisma.invitation.deleteMany({});
@@ -77,16 +81,21 @@ describe('ContentRequests (e2e)', () => {
       data: { name: 'E2E Tenant CR', slug: 'e2e-tenant-cr' },
     });
     tenantId = tenant.id;
+    const secondTenant = await prisma.tenant.create({ data: { name: 'E2E Tenant CR B', slug: 'e2e-tenant-cr-b' } });
+    secondTenantId = secondTenant.id;
 
     await prisma.membership.createMany({
       data: [
         { userId: ownerId, tenantId: tenantId, role: 'OWNER' },
         { userId: memberId, tenantId: tenantId, role: 'MEMBER' },
+        { userId: ownerId, tenantId: secondTenantId, role: 'OWNER' },
       ],
     });
   });
 
   afterAll(async () => {
+    await prisma.generatedContent.deleteMany({});
+    await prisma.contentGeneration.deleteMany({});
     await prisma.contentRequest.deleteMany({});
     await prisma.membership.deleteMany({});
     await prisma.invitation.deleteMany({});
@@ -196,5 +205,31 @@ describe('ContentRequests (e2e)', () => {
         .send({ title: 'Try to update archived' })
         .expect(403);
     });
+  });
+
+  describe('Submit Content Generation', () => {
+    it('prepara uma solicitação DRAFT', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/content-requests')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .set('x-tenant-id', tenantId)
+        .send({ title: 'Generation request', briefing: 'Briefing determinístico para o provider fake.', platform: 'INSTAGRAM_FEED' })
+        .expect(201);
+      submissionContentId = res.body.id;
+    });
+
+    it('submit sem JWT -> 401', () => request(app.getHttpServer()).post(`/content-requests/${submissionContentId}/submit`).set('x-tenant-id', tenantId).expect(401));
+
+    it('cross-tenant -> 404', () => request(app.getHttpServer()).post(`/content-requests/${submissionContentId}/submit`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', secondTenantId).expect(404));
+
+    it('submit válido -> 202 e clique duplo é idempotente', async () => {
+      const first = await request(app.getHttpServer()).post(`/content-requests/${submissionContentId}/submit`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).expect(202);
+      expect(first.body).toMatchObject({ status: 'QUEUED', idempotent: false });
+      const duplicate = await request(app.getHttpServer()).post(`/content-requests/${submissionContentId}/submit`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).expect(202);
+      expect(duplicate.body).toMatchObject({ generationId: first.body.generationId, idempotent: true });
+      expect(await prisma.contentGeneration.count({ where: { contentRequestId: submissionContentId } })).toBe(1);
+    });
+
+    it('status inválido -> 409', () => request(app.getHttpServer()).post(`/content-requests/${createdContentId}/submit`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).expect(409));
   });
 });

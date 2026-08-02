@@ -33,6 +33,8 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     // Ensure postgres can set role
     await prisma.$executeRaw`GRANT api_user TO postgres`;
 
+    await prisma.$executeRaw`DELETE FROM public."GeneratedContent"`;
+    await prisma.$executeRaw`DELETE FROM public."ContentGeneration"`;
     // Clear ContentRequest just in case it has leftovers
     await prisma.$executeRaw`DELETE FROM public."ContentRequest"`;
   });
@@ -44,6 +46,8 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     await prisma.$executeRaw`ALTER TABLE public."AuditLog" ENABLE TRIGGER ALL`;
     
     await prisma.$executeRaw`DELETE FROM public."Invitation"`;
+    await prisma.$executeRaw`DELETE FROM public."GeneratedContent"`;
+    await prisma.$executeRaw`DELETE FROM public."ContentGeneration"`;
     await prisma.$executeRaw`DELETE FROM public."Membership"`;
     await prisma.$executeRaw`DELETE FROM public."ContentRequest"`;
     await prisma.$executeRaw`DELETE FROM public."Tenant"`;
@@ -79,6 +83,8 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     // Seed basic data as SUPERUSER (bypassing RLS)
     await prisma.$executeRaw`INSERT INTO auth.users (id, instance_id, email, aud, role, encrypted_password, created_at, updated_at) VALUES (${userIdA}::uuid, '00000000-0000-0000-0000-000000000000', 'testA@test.com', 'authenticated', 'authenticated', 'pass', NOW(), NOW()) ON CONFLICT DO NOTHING`;
     await prisma.$executeRaw`INSERT INTO auth.users (id, instance_id, email, aud, role, encrypted_password, created_at, updated_at) VALUES (${userIdB}::uuid, '00000000-0000-0000-0000-000000000000', 'testB@test.com', 'authenticated', 'authenticated', 'pass', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+    await prisma.$executeRaw`INSERT INTO public."UserProfile" (id, email, "createdAt", "updatedAt") VALUES (${userIdA}::uuid, 'testA@test.com', NOW(), NOW()) ON CONFLICT (id) DO NOTHING`;
+    await prisma.$executeRaw`INSERT INTO public."UserProfile" (id, email, "createdAt", "updatedAt") VALUES (${userIdB}::uuid, 'testB@test.com', NOW(), NOW()) ON CONFLICT (id) DO NOTHING`;
 
     await prisma.$executeRaw`INSERT INTO public."Tenant" (id, name, slug, status, "createdAt", "updatedAt") VALUES (${tenantAId}::uuid, 'Tenant A', 'tenant-a', 'ACTIVE', NOW(), NOW()) ON CONFLICT DO NOTHING`;
     await prisma.$executeRaw`INSERT INTO public."Tenant" (id, name, slug, status, "createdAt", "updatedAt") VALUES (${tenantBId}::uuid, 'Tenant B', 'tenant-b', 'ACTIVE', NOW(), NOW()) ON CONFLICT DO NOTHING`;
@@ -303,6 +309,55 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       await asUser(userIdA, tenantAId, async (tx) => {
         const reqs = await tx.$queryRaw<any[]>`SELECT * FROM public."ContentRequest" WHERE "tenantId" = ${tenantBId}::uuid`;
         expect(reqs.length).toBe(0);
+      });
+    });
+  });
+
+  describe('CONTENT GENERATION PIPELINE', () => {
+    const requestA = 'c0000000-0000-0000-0000-000000000020';
+    const requestB = 'c0000000-0000-0000-0000-000000000021';
+    const generationA = 'd0000000-0000-0000-0000-000000000020';
+
+    beforeAll(async () => {
+      await prisma.$executeRaw`INSERT INTO public."ContentRequest" (id, "tenantId", "createdById", title, briefing, platform, status, "createdAt", "updatedAt") VALUES (${requestA}::uuid, ${tenantAId}::uuid, ${userIdA}::uuid, 'Generation RLS', 'Briefing RLS', 'INSTAGRAM_FEED', 'SUBMITTED', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+      await prisma.$executeRaw`INSERT INTO public."ContentRequest" (id, "tenantId", "createdById", title, briefing, platform, status, "createdAt", "updatedAt") VALUES (${requestB}::uuid, ${tenantBId}::uuid, ${userIdB}::uuid, 'Generation RLS B', 'Briefing RLS B', 'INSTAGRAM_FEED', 'SUBMITTED', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+    });
+
+    it('sem contexto não lê Generation nem GeneratedContent', async () => {
+      await asUser('', null, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."ContentGeneration"`).length).toBe(0);
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."GeneratedContent"`).length).toBe(0);
+      });
+    });
+
+    it('tenant A cria geração própria e não cria em tenant B', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."ContentGeneration" (id, "tenantId", "contentRequestId", "requestedById", status, provider, model, "promptVersion", "idempotencyKey", "createdAt", "updatedAt") VALUES (${generationA}::uuid, ${tenantAId}::uuid, ${requestA}::uuid, ${userIdA}::uuid, 'QUEUED', 'fake', 'fake-v1', 'pt-BR-v1', 'rls-generation-a', NOW(), NOW())`).resolves.toBe(1);
+      });
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."ContentGeneration" (id, "tenantId", "contentRequestId", "requestedById", status, provider, model, "promptVersion", "idempotencyKey", "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantBId}::uuid, ${requestA}::uuid, ${userIdA}::uuid, 'QUEUED', 'fake', 'fake-v1', 'pt-BR-v1', 'rls-cross-tenant', NOW(), NOW())`).rejects.toThrow();
+      });
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."ContentGeneration" (id, "tenantId", "contentRequestId", "requestedById", status, provider, model, "promptVersion", "idempotencyKey", "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, ${requestB}::uuid, ${userIdA}::uuid, 'QUEUED', 'fake', 'fake-v1', 'pt-BR-v1', 'rls-cross-reference', NOW(), NOW())`).rejects.toThrow();
+      });
+    });
+
+    it('tenant B não lê nem altera geração de A', async () => {
+      await asUser(userIdB, tenantBId, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."ContentGeneration" WHERE id = ${generationA}::uuid`).length).toBe(0);
+        expect(await tx.$executeRaw`UPDATE public."ContentGeneration" SET attempt = 99 WHERE id = ${generationA}::uuid`).toBe(0);
+      });
+    });
+
+    it('resultado é tenant-scoped e generationId é idempotente', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."GeneratedContent" (id, "tenantId", "contentRequestId", "generationId", caption, "callToAction", hashtags, version, "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, ${requestA}::uuid, ${generationA}::uuid, 'Legenda', 'CTA', ARRAY['#Teste'], 1, NOW(), NOW())`).resolves.toBe(1);
+      });
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."GeneratedContent" (id, "tenantId", "contentRequestId", "generationId", caption, "callToAction", hashtags, version, "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, ${requestA}::uuid, ${generationA}::uuid, 'Duplicada', 'CTA', ARRAY['#Teste'], 2, NOW(), NOW())`).rejects.toThrow();
+      });
+      await asUser(userIdB, tenantBId, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."GeneratedContent"`).length).toBe(0);
       });
     });
   });

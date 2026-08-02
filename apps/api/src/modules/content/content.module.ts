@@ -8,6 +8,8 @@ import { ArchiveContentRequestUseCase } from './application/use-cases/archive-co
 import { ContentRequestRepository } from './domain/repositories/content-request.repository';
 import { PrismaContentRequestRepository } from './infrastructure/database/prisma-content-request.repository';
 import { TenantsModule } from '../tenants/tenants.module';
+import { SubmitContentRequestUseCase } from './application/use-cases/submit-content-request.use-case';
+import { ContentGenerationQueue } from './infrastructure/queue/content-generation.queue';
 
 @Module({
   imports: [TenantsModule],
@@ -18,10 +20,13 @@ import { TenantsModule } from '../tenants/tenants.module';
     GetContentRequestUseCase,
     UpdateContentRequestUseCase,
     ArchiveContentRequestUseCase,
+    SubmitContentRequestUseCase,
+    ContentGenerationQueue,
     {
       provide: ContentRequestRepository,
       useClass: PrismaContentRequestRepository,
     },
   ],
+  exports: [ContentGenerationQueue],
 })
 export class ContentModule {}

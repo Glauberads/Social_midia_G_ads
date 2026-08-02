@@ -11,11 +11,12 @@ describe('CreateTenantUseCase', () => {
 
   beforeEach(() => {
     mockUow = {
-      execute: jest.fn(async (work) => {
+      executeGlobal: jest.fn(async (_userId, work) => {
         const tx = {
           userProfile: {
             findUnique: jest.fn().mockResolvedValue({ id: 'user-123' }),
           },
+          $executeRaw: jest.fn().mockResolvedValue(1),
         };
         return await work(tx);
       }),
@@ -57,11 +58,10 @@ describe('CreateTenantUseCase', () => {
 
   it('deve criar um tenant com sucesso', async () => {
     const result = await useCase.execute({ name: 'Workspace', slug: 'workspace' }, 'user-123', 'req-1');
-    expect(result.id).toBe('tenant-123');
+    expect(result.id).toEqual(expect.any(String));
+    expect(result.name).toBe('Workspace');
     expect(result.membership.role).toBe('OWNER');
-    expect(mockTenantRepo.create).toHaveBeenCalled();
-    expect(mockMembershipRepo.create).toHaveBeenCalled();
-    expect(mockAuditLogRepo.append).toHaveBeenCalled();
+    expect(mockUow.executeGlobal).toHaveBeenCalled();
   });
 
   it('deve rejeitar slug reservado', async () => {
@@ -76,11 +76,12 @@ describe('CreateTenantUseCase', () => {
   });
 
   it('deve falhar se perfil não existir (simulado no uow)', async () => {
-    mockUow.execute = jest.fn(async (work) => {
+    mockUow.executeGlobal = jest.fn(async (_userId, work) => {
       const tx = {
         userProfile: {
           findUnique: jest.fn().mockResolvedValue(null),
         },
+        $executeRaw: jest.fn(),
       };
       return await work(tx);
     });
@@ -89,7 +90,10 @@ describe('CreateTenantUseCase', () => {
   });
 
   it('deve propagar falha de Membership e não engolir o erro', async () => {
-    mockMembershipRepo.create.mockRejectedValueOnce(new Error('DB Error'));
+    mockUow.executeGlobal = jest.fn(async (_userId, work) => work({
+      userProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'user-123' }) },
+      $executeRaw: jest.fn().mockRejectedValue(new Error('DB Error')),
+    }));
     await expect(useCase.execute({ name: 'Workspace', slug: 'workspace' }, 'user-123', 'req-1'))
       .rejects.toThrow('DB Error');
   });
