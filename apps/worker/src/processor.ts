@@ -1,5 +1,5 @@
 import { Job, UnrecoverableError } from 'bullmq';
-import { ContentStatus, GenerationStatus, Prisma, PrismaClient } from '@projeto/database';
+import { ContentStatus, GenerationStatus, Prisma, PrismaClient, RevisionSource, RevisionStatus } from '@projeto/database';
 import { ContentGenerationProvider, ProviderError } from './providers/content-generation.provider';
 
 export interface ContentGenerationJob {
@@ -30,17 +30,37 @@ export class ContentGenerationProcessor {
     try {
       const result = await this.provider.generate(input);
       await this.inTenantTransaction(data, async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "ContentRequest" WHERE id = ${data.contentRequestId}::uuid AND "tenantId" = ${data.tenantId}::uuid FOR UPDATE`;
         const generation = await tx.contentGeneration.findFirst({ where: { id: data.generationId, tenantId: data.tenantId } });
         if (!generation || generation.status === GenerationStatus.SUCCEEDED) return;
-        const existing = await tx.generatedContent.findUnique({ where: { generationId: generation.id } });
-        if (!existing) {
+        let generatedContent = await tx.generatedContent.findUnique({ where: { generationId: generation.id } });
+        if (!generatedContent) {
           const version = (await tx.generatedContent.count({ where: { contentRequestId: data.contentRequestId } })) + 1;
-          await tx.generatedContent.create({ data: { tenantId: data.tenantId, contentRequestId: data.contentRequestId, generationId: generation.id, version, ...result } });
+          generatedContent = await tx.generatedContent.create({ data: { tenantId: data.tenantId, contentRequestId: data.contentRequestId, generationId: generation.id, version, ...result } });
+        }
+        let revision = await tx.contentRevision.findFirst({ where: { generatedContentId: generatedContent.id, source: { in: [RevisionSource.AI_GENERATED, RevisionSource.REGENERATED] } } });
+        if (!revision) {
+          const revisionCount = await tx.contentRevision.count({ where: { contentRequestId: data.contentRequestId } });
+          await tx.contentRevision.updateMany({ where: { contentRequestId: data.contentRequestId, status: RevisionStatus.DRAFT }, data: { status: RevisionStatus.SUPERSEDED } });
+          revision = await tx.contentRevision.create({
+            data: {
+              tenantId: data.tenantId,
+              contentRequestId: data.contentRequestId,
+              generatedContentId: generatedContent.id,
+              createdById: data.requestedById,
+              source: revisionCount === 0 ? RevisionSource.AI_GENERATED : RevisionSource.REGENERATED,
+              caption: generatedContent.caption,
+              callToAction: generatedContent.callToAction,
+              hashtags: generatedContent.hashtags,
+              version: revisionCount + 1,
+            },
+          });
+          await tx.auditLog.create({ data: { tenantId: data.tenantId, actorId: data.requestedById, action: 'CONTENT_REVISION_GENERATED', entity: 'ContentRevision', entityId: revision.id, requestId: data.requestId, metadata: { version: revision.version, source: revision.source, generationId: generation.id } } });
         }
         const completedAt = new Date();
         await tx.contentGeneration.update({ where: { id: generation.id }, data: { status: GenerationStatus.SUCCEEDED, completedAt, errorCode: null, errorMessage: null } });
         await tx.contentRequest.update({ where: { id: data.contentRequestId }, data: { status: ContentStatus.READY } });
-        await tx.auditLog.create({ data: { tenantId: data.tenantId, actorId: data.requestedById, action: 'CONTENT_GENERATION_SUCCEEDED', entity: 'ContentGeneration', entityId: generation.id, requestId: data.requestId, metadata: { promptVersion: generation.promptVersion } } });
+        await tx.auditLog.create({ data: { tenantId: data.tenantId, actorId: data.requestedById, action: 'CONTENT_GENERATION_SUCCEEDED', entity: 'ContentGeneration', entityId: generation.id, requestId: data.requestId, metadata: { promptVersion: generation.promptVersion, revisionVersion: revision.version } } });
       });
     } catch (error) {
       const providerError = error instanceof ProviderError ? error : new ProviderError('GENERATION_INTERNAL_ERROR', false, 'Generation failed');

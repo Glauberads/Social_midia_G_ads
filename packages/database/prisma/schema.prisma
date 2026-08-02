@@ -45,6 +45,8 @@ model UserProfile {
   acceptedInvitations  Invitation[]        @relation("InvitationAcceptedBy")
   contentRequests      ContentRequest[]
   requestedGenerations ContentGeneration[] @relation("GenerationRequester")
+  createdRevisions     ContentRevision[]   @relation("RevisionCreator")
+  approvedRevisions    ContentRevision[]   @relation("RevisionApprover")
 }
 
 model Tenant {
@@ -61,6 +63,7 @@ model Tenant {
   contentRequests    ContentRequest[]
   contentGenerations ContentGeneration[]
   generatedContents  GeneratedContent[]
+  contentRevisions   ContentRevision[]
 }
 
 model Membership {
@@ -146,6 +149,19 @@ enum GenerationStatus {
   FAILED
 }
 
+enum RevisionSource {
+  AI_GENERATED
+  MANUAL_EDIT
+  REGENERATED
+}
+
+enum RevisionStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
 model ContentRequest {
   id          String @id @default(uuid()) @db.Uuid
   tenantId    String @db.Uuid
@@ -166,6 +182,7 @@ model ContentRequest {
   createdBy         UserProfile         @relation(fields: [createdById], references: [id], onDelete: Restrict)
   generations       ContentGeneration[]
   generatedContents GeneratedContent[]
+  revisions         ContentRevision[]
 
   @@index([tenantId, createdAt])
   @@index([tenantId, status])
@@ -215,8 +232,42 @@ model GeneratedContent {
   tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   contentRequest ContentRequest    @relation(fields: [contentRequestId], references: [id], onDelete: Restrict)
   generation     ContentGeneration @relation(fields: [generationId], references: [id], onDelete: Restrict)
+  revisions      ContentRevision[]
 
   @@unique([contentRequestId, version])
   @@index([tenantId, contentRequestId])
   @@index([tenantId, createdAt])
+}
+
+model ContentRevision {
+  id                 String         @id @default(uuid()) @db.Uuid
+  tenantId           String         @db.Uuid
+  contentRequestId   String         @db.Uuid
+  generatedContentId String?        @db.Uuid
+  createdById        String         @db.Uuid
+  source             RevisionSource
+  caption            String         @db.Text
+  callToAction       String         @db.Text
+  hashtags           String[]
+  version            Int
+  status             RevisionStatus @default(DRAFT)
+  rejectionReason    String?        @db.Text
+  approvedAt         DateTime?
+  approvedById       String?        @db.Uuid
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  contentRequest   ContentRequest    @relation(fields: [contentRequestId], references: [id], onDelete: Restrict)
+  generatedContent GeneratedContent? @relation(fields: [generatedContentId], references: [id], onDelete: Restrict)
+  createdBy        UserProfile       @relation("RevisionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy       UserProfile?      @relation("RevisionApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@unique([contentRequestId, version])
+  @@index([tenantId, contentRequestId, status])
+  @@index([tenantId, createdAt])
+  @@index([contentRequestId, createdAt])
+  @@index([generatedContentId])
+  @@index([createdById])
+  @@index([approvedById])
 }

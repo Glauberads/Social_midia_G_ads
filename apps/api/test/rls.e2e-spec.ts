@@ -33,6 +33,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     // Ensure postgres can set role
     await prisma.$executeRaw`GRANT api_user TO postgres`;
 
+    await prisma.$executeRaw`DELETE FROM public."ContentRevision"`;
     await prisma.$executeRaw`DELETE FROM public."GeneratedContent"`;
     await prisma.$executeRaw`DELETE FROM public."ContentGeneration"`;
     // Clear ContentRequest just in case it has leftovers
@@ -46,6 +47,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     await prisma.$executeRaw`ALTER TABLE public."AuditLog" ENABLE TRIGGER ALL`;
     
     await prisma.$executeRaw`DELETE FROM public."Invitation"`;
+    await prisma.$executeRaw`DELETE FROM public."ContentRevision"`;
     await prisma.$executeRaw`DELETE FROM public."GeneratedContent"`;
     await prisma.$executeRaw`DELETE FROM public."ContentGeneration"`;
     await prisma.$executeRaw`DELETE FROM public."Membership"`;
@@ -358,6 +360,46 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       });
       await asUser(userIdB, tenantBId, async (tx) => {
         expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."GeneratedContent"`).length).toBe(0);
+      });
+    });
+  });
+
+  describe('CONTENT REVISION EDITORIAL RLS', () => {
+    const requestA = 'c0000000-0000-0000-0000-000000000020';
+    const requestB = 'c0000000-0000-0000-0000-000000000021';
+    const revisionA = 'e0000000-0000-0000-0000-000000000020';
+    const revisionB = 'e0000000-0000-0000-0000-000000000021';
+
+    beforeAll(async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await tx.$executeRaw`INSERT INTO public."ContentRevision" (id, "tenantId", "contentRequestId", "createdById", source, caption, "callToAction", hashtags, version, status, "createdAt", "updatedAt") VALUES (${revisionA}::uuid, ${tenantAId}::uuid, ${requestA}::uuid, ${userIdA}::uuid, 'AI_GENERATED', 'Legenda A', 'CTA A', ARRAY['#A'], 1, 'DRAFT', NOW(), NOW())`;
+      });
+      await asUser(userIdB, tenantBId, async (tx) => {
+        await tx.$executeRaw`INSERT INTO public."ContentRevision" (id, "tenantId", "contentRequestId", "createdById", source, caption, "callToAction", hashtags, version, status, "createdAt", "updatedAt") VALUES (${revisionB}::uuid, ${tenantBId}::uuid, ${requestB}::uuid, ${userIdB}::uuid, 'AI_GENERATED', 'Legenda B', 'CTA B', ARRAY['#B'], 1, 'DRAFT', NOW(), NOW())`;
+      });
+    });
+
+    it('falha fechado sem contexto e filtra consultas sem tenant explícito', async () => {
+      await asUser('', null, async (tx) => expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."ContentRevision"`).length).toBe(0));
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const rows = await tx.$queryRaw<any[]>`SELECT * FROM public."ContentRevision"`;
+        expect(rows.length).toBe(1);
+        expect(rows[0].tenantId).toBe(tenantAId);
+      });
+    });
+
+    it('impede referências e autoria cruzadas no insert', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."ContentRevision" (id, "tenantId", "contentRequestId", "createdById", source, caption, "callToAction", hashtags, version, status, "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, ${requestB}::uuid, ${userIdA}::uuid, 'MANUAL_EDIT', 'Cross', 'CTA', ARRAY['#X'], 2, 'DRAFT', NOW(), NOW())`).rejects.toThrow();
+        await expect(tx.$executeRaw`INSERT INTO public."ContentRevision" (id, "tenantId", "contentRequestId", "createdById", source, caption, "callToAction", hashtags, version, status, "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, ${requestA}::uuid, ${userIdB}::uuid, 'MANUAL_EDIT', 'Cross', 'CTA', ARRAY['#X'], 2, 'DRAFT', NOW(), NOW())`).rejects.toThrow();
+      });
+    });
+
+    it('tenant B não lê nem altera revisão de A e delete permanece negado', async () => {
+      await asUser(userIdB, tenantBId, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."ContentRevision" WHERE id = ${revisionA}::uuid`).length).toBe(0);
+        expect(await tx.$executeRaw`UPDATE public."ContentRevision" SET caption = 'Hacked' WHERE id = ${revisionA}::uuid`).toBe(0);
+        expect(await tx.$executeRaw`DELETE FROM public."ContentRevision" WHERE id = ${revisionB}::uuid`).toBe(0);
       });
     });
   });

@@ -52,6 +52,7 @@ describe('ContentRequests (e2e)', () => {
     prisma = app.get<PrismaService>(PrismaService);
 
     // Clean up
+    await prisma.contentRevision.deleteMany({});
     await prisma.generatedContent.deleteMany({});
     await prisma.contentGeneration.deleteMany({});
     await prisma.contentRequest.deleteMany({});
@@ -94,6 +95,7 @@ describe('ContentRequests (e2e)', () => {
   });
 
   afterAll(async () => {
+    await prisma.contentRevision.deleteMany({});
     await prisma.generatedContent.deleteMany({});
     await prisma.contentGeneration.deleteMany({});
     await prisma.contentRequest.deleteMany({});
@@ -231,5 +233,74 @@ describe('ContentRequests (e2e)', () => {
     });
 
     it('status inválido -> 409', () => request(app.getHttpServer()).post(`/content-requests/${createdContentId}/submit`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).expect(409));
+  });
+
+  describe('Editorial revisions, approval and rejection', () => {
+    let editorialContentId: string;
+    let activeRevisionId: string;
+
+    async function seedReadyRevision(label: string) {
+      const content = await prisma.contentRequest.create({ data: { tenantId, createdById: ownerId, title: label, briefing: 'Briefing pronto para decisão editorial.', platform: 'INSTAGRAM_FEED', status: 'READY' } });
+      const generation = await prisma.contentGeneration.create({ data: { tenantId, contentRequestId: content.id, requestedById: ownerId, provider: 'fake', model: 'fake-v1', promptVersion: 'pt-BR-v1', idempotencyKey: `${label}-${content.id}`, status: 'SUCCEEDED', completedAt: new Date() } });
+      const generated = await prisma.generatedContent.create({ data: { tenantId, contentRequestId: content.id, generationId: generation.id, caption: 'Legenda inicial', callToAction: 'Saiba mais', hashtags: ['#Teste'], version: 1 } });
+      const revision = await prisma.contentRevision.create({ data: { tenantId, contentRequestId: content.id, generatedContentId: generated.id, createdById: ownerId, source: 'AI_GENERATED', caption: generated.caption, callToAction: generated.callToAction, hashtags: generated.hashtags, version: 1 } });
+      return { content, revision };
+    }
+
+    beforeAll(async () => {
+      const { content, revision } = await seedReadyRevision('Editorial flow');
+      editorialContentId = content.id;
+      activeRevisionId = revision.id;
+    });
+
+    it('histórico exige autenticação e isolamento por tenant', async () => {
+      await request(app.getHttpServer()).get(`/content-requests/${editorialContentId}/revisions`).set('x-tenant-id', tenantId).expect(401);
+      await request(app.getHttpServer()).get(`/content-requests/${editorialContentId}/revisions`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', secondTenantId).expect(404);
+    });
+
+    it('edições simultâneas recebem versões ordenadas e preservam um único draft', async () => {
+      const [first, second] = await Promise.all([
+        request(app.getHttpServer()).post(`/content-requests/${editorialContentId}/revisions`).set('Authorization', `Bearer ${memberToken}`).set('x-tenant-id', tenantId).send({ caption: 'Legenda revisada A', callToAction: 'Converse conosco', hashtags: ['#Revisada'] }),
+        request(app.getHttpServer()).post(`/content-requests/${editorialContentId}/revisions`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).send({ caption: 'Legenda revisada B', callToAction: 'Conheça agora', hashtags: ['#Editorial'] }),
+      ]);
+      expect([first.status, second.status]).toEqual([201, 201]);
+      expect([first.body.version, second.body.version].sort()).toEqual([2, 3]);
+      activeRevisionId = first.body.version === 3 ? first.body.id : second.body.id;
+      const history = await request(app.getHttpServer()).get(`/content-requests/${editorialContentId}/revisions`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).expect(200);
+      expect(history.body.items.map((item: any) => [item.version, item.status])).toEqual([[3, 'DRAFT'], [2, 'SUPERSEDED'], [1, 'SUPERSEDED']]);
+    });
+
+    it('aprovação e rejeição concorrentes deixam uma única transição consistente', async () => {
+      const headers = { Authorization: `Bearer ${ownerToken}`, 'x-tenant-id': tenantId };
+      const [approve, reject] = await Promise.all([
+        request(app.getHttpServer()).post(`/content-requests/${editorialContentId}/revisions/${activeRevisionId}/approve`).set(headers),
+        request(app.getHttpServer()).post(`/content-requests/${editorialContentId}/revisions/${activeRevisionId}/reject`).set(headers).send({ reason: 'Ajustar o posicionamento' }),
+      ]);
+      expect([approve.status, reject.status].sort()).toEqual([200, 409]);
+      const content = await prisma.contentRequest.findUniqueOrThrow({ where: { id: editorialContentId } });
+      const revision = await prisma.contentRevision.findUniqueOrThrow({ where: { id: activeRevisionId } });
+      expect(content.status === 'APPROVED' ? revision.status === 'APPROVED' : revision.status === 'REJECTED').toBe(true);
+      if (content.status === 'APPROVED') await request(app.getHttpServer()).post(`/content-requests/${editorialContentId}/archive`).set(headers).expect(409);
+    });
+
+    it('motivo de rejeição é obrigatório', async () => {
+      await request(app.getHttpServer()).post(`/content-requests/${editorialContentId}/revisions/${activeRevisionId}/reject`).set('Authorization', `Bearer ${ownerToken}`).set('x-tenant-id', tenantId).send({ reason: '' }).expect(400);
+    });
+
+    it('aprova READY uma vez e bloqueia nova aprovação ou rejeição', async () => {
+      const { content, revision } = await seedReadyRevision('Approve once');
+      const endpoint = `/content-requests/${content.id}/revisions/${revision.id}`;
+      const auth = { Authorization: `Bearer ${ownerToken}`, 'x-tenant-id': tenantId };
+      await request(app.getHttpServer()).post(`${endpoint}/approve`).set(auth).expect(200);
+      await request(app.getHttpServer()).post(`${endpoint}/approve`).set(auth).expect(409);
+      await request(app.getHttpServer()).post(`${endpoint}/reject`).set(auth).send({ reason: 'Não deveria aceitar' }).expect(409);
+    });
+
+    it('rejeita READY com motivo sanitizado e mantém o histórico', async () => {
+      const { content, revision } = await seedReadyRevision('Reject once');
+      const response = await request(app.getHttpServer()).post(`/content-requests/${content.id}/revisions/${revision.id}/reject`).set('Authorization', `Bearer ${memberToken}`).set('x-tenant-id', tenantId).send({ reason: '  Ajustar\n\t o tom  ' }).expect(200);
+      expect(response.body).toMatchObject({ status: 'REJECTED', rejectionReason: 'Ajustar o tom' });
+      expect((await prisma.contentRequest.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('REJECTED');
+    });
   });
 });
