@@ -16,6 +16,11 @@ import { GetContentRevisionUseCase } from '../application/use-cases/get-content-
 import { ApproveContentRevisionUseCase } from '../application/use-cases/approve-content-revision.use-case';
 import { RejectContentRevisionUseCase } from '../application/use-cases/reject-content-revision.use-case';
 import { CreateContentRevisionDto, ListContentRevisionsQueryDto, RejectContentRevisionDto } from './dtos/content-revision.dto';
+import { ScheduleContentUseCase } from '../application/use-cases/schedule-content.use-case';
+import { RescheduleContentUseCase } from '../application/use-cases/reschedule-content.use-case';
+import { CancelContentScheduleUseCase } from '../application/use-cases/cancel-content-schedule.use-case';
+import { GetContentScheduleUseCase } from '../application/use-cases/get-content-schedule.use-case';
+import { ScheduleContentDto, CancelContentScheduleDto } from './dtos/content-schedule.dto';
 
 @Controller('content-requests')
 @TenantScoped()
@@ -32,6 +37,10 @@ export class ContentController {
     private readonly getRevisionUseCase: GetContentRevisionUseCase,
     private readonly approveRevisionUseCase: ApproveContentRevisionUseCase,
     private readonly rejectRevisionUseCase: RejectContentRevisionUseCase,
+    private readonly scheduleContentUseCase: ScheduleContentUseCase,
+    private readonly rescheduleContentUseCase: RescheduleContentUseCase,
+    private readonly cancelScheduleUseCase: CancelContentScheduleUseCase,
+    private readonly getScheduleUseCase: GetContentScheduleUseCase,
   ) {}
 
   @Post()
@@ -92,6 +101,66 @@ export class ContentController {
   @RequireRoles('OWNER', 'ADMIN', 'MEMBER')
   async rejectRevision(@Req() req: any, @Param('id') id: string, @Param('revisionId') revisionId: string, @Body() dto: RejectContentRevisionDto) {
     return this.rejectRevisionUseCase.execute(id, revisionId, req.tenantScope.tenantId, req.user.userId, req.requestId, dto.reason);
+  }
+
+  @Post(':id/schedule')
+  @UseGuards(RbacGuard)
+  @RequireRoles('OWNER', 'ADMIN', 'MEMBER')
+  async schedule(@Req() req: any, @Param('id') id: string, @Body() dto: ScheduleContentDto) {
+    // The client sends localDateTime (which we treat as UTC in ISO format, per the user requirement: localDateTime as ISO string representing the instant)
+    // Actually the user specified:
+    // { "localDateTime": "2026-08-10T14:30:00", "timezone": "America/Sao_Paulo" }
+    // We should parse it as an absolute UTC instant if it has a Z, or parse it in the given timezone.
+    // However, JS Date parsing of "2026-08-10T14:30:00" depends on local machine.
+    // Better to just accept scheduledFor as a full ISO UTC string in the DTO, but the user requested:
+    // "Ou aceitar ISO com offset, mas não misturar os dois formatos. O backend deve transformar para UTC e persistir: scheduledFor: instante UTC; timezone: zona IANA"
+    // I will expect the frontend to send `localDateTime` as a valid ISO-8601 with offset (e.g. "2026-08-10T14:30:00-03:00") and a `timezone` IANA string.
+    return this.scheduleContentUseCase.execute({
+      contentRequestId: id,
+      tenantId: req.tenantScope.tenantId,
+      userId: req.user.userId,
+      requestId: req.requestId,
+      scheduledFor: dto.localDateTime,
+      timezone: dto.timezone,
+    });
+  }
+
+  @Patch(':id/schedule')
+  @UseGuards(RbacGuard)
+  @RequireRoles('OWNER', 'ADMIN', 'MEMBER')
+  async reschedule(@Req() req: any, @Param('id') id: string, @Body() dto: ScheduleContentDto) {
+    return this.rescheduleContentUseCase.execute({
+      contentRequestId: id,
+      tenantId: req.tenantScope.tenantId,
+      userId: req.user.userId,
+      requestId: req.requestId,
+      scheduledFor: dto.localDateTime,
+      timezone: dto.timezone,
+    });
+  }
+
+  @Post(':id/schedule/cancel')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RbacGuard)
+  @RequireRoles('OWNER', 'ADMIN', 'MEMBER')
+  async cancelSchedule(@Req() req: any, @Param('id') id: string, @Body() dto: CancelContentScheduleDto) {
+    return this.cancelScheduleUseCase.execute({
+      contentRequestId: id,
+      tenantId: req.tenantScope.tenantId,
+      userId: req.user.userId,
+      requestId: req.requestId,
+      reason: dto.reason,
+    });
+  }
+
+  @Get(':id/schedule')
+  async getSchedule(@Req() req: any, @Param('id') id: string) {
+    const schedule = await this.getScheduleUseCase.execute({
+      contentRequestId: id,
+      tenantId: req.tenantScope.tenantId,
+      userId: req.user.userId,
+    });
+    return schedule || null;
   }
 
   @Get()

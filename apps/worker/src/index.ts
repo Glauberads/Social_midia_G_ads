@@ -6,6 +6,7 @@ import { loadConfig } from './config';
 import { ContentGenerationProcessor, ContentGenerationJob } from './processor';
 import { FakeContentGenerationProvider } from './providers/fake.provider';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider';
+import { DueScheduleProcessor } from './due-processor';
 
 export const CONTENT_GENERATION_QUEUE = 'content-generation';
 
@@ -25,7 +26,18 @@ export async function startWorker() {
   worker.on('ready', () => console.log(JSON.stringify({ event: 'worker_ready', queue: CONTENT_GENERATION_QUEUE })));
   worker.on('completed', (job) => console.log(JSON.stringify({ event: 'generation_completed', jobId: job.id, generationId: job.data.generationId, requestId: job.data.requestId })));
   worker.on('failed', (job, error) => console.error(JSON.stringify({ event: 'generation_failed', jobId: job?.id, generationId: job?.data.generationId, requestId: job?.data.requestId, code: error.message.slice(0, 100) })));
-  const shutdown = async () => { await worker.close(); await connection.quit(); await prisma.$disconnect(); };
+  
+  const dueProcessor = new DueScheduleProcessor(prisma);
+  const dueInterval = setInterval(() => {
+    dueProcessor.processBatch().catch((err) => console.error(JSON.stringify({ event: 'due_processor_error', error: err.message })));
+  }, 10000); // Check every 10 seconds
+
+  const shutdown = async () => { 
+    clearInterval(dueInterval);
+    await worker.close(); 
+    await connection.quit(); 
+    await prisma.$disconnect(); 
+  };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
   return { worker, prisma, connection };
