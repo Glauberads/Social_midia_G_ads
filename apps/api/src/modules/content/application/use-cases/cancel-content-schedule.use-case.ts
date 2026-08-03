@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ContentScheduleRepository } from '../../domain/repositories/content-schedule.repository';
 import { TenantTransactionService } from '../../../../modules/tenants/application/services/tenant-transaction.service';
 import { ContentScheduleModel, ScheduleStatus } from '../../domain/models/content-schedule.model';

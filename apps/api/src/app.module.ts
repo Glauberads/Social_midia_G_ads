@@ -15,6 +15,8 @@ import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { TenantContextInterceptor } from './modules/tenants/presentation/tenant-context.interceptor';
 
 import { ContentModule } from './modules/content/content.module';
+import { CoreModule } from './modules/core/core.module';
+import { InstagramConnectionsModule } from './modules/instagram-connections/instagram-connections.module';
 
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { ContentModule } from './modules/content/content.module';
     InvitationsModule,
     HealthModule,
     ContentModule,
+    CoreModule,
+    InstagramConnectionsModule,
   ],
   controllers: [AppController],
   providers: [

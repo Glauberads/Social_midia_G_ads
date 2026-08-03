@@ -56,6 +56,9 @@ describe('ContentRequests (e2e)', () => {
     await prisma.generatedContent.deleteMany({});
     await prisma.contentGeneration.deleteMany({});
     await prisma.contentRequest.deleteMany({});
+    await prisma.$executeRaw`DELETE FROM public."oauth_sessions"`;
+    await prisma.$executeRaw`DELETE FROM public."oauth_states"`;
+    await prisma.$executeRaw`DELETE FROM public."social_connections"`;
     await prisma.membership.deleteMany({});
     await prisma.invitation.deleteMany({});
     await prisma.tenant.deleteMany({});
@@ -99,6 +102,9 @@ describe('ContentRequests (e2e)', () => {
     await prisma.generatedContent.deleteMany({});
     await prisma.contentGeneration.deleteMany({});
     await prisma.contentRequest.deleteMany({});
+    await prisma.$executeRaw`DELETE FROM public."oauth_sessions"`;
+    await prisma.$executeRaw`DELETE FROM public."oauth_states"`;
+    await prisma.$executeRaw`DELETE FROM public."social_connections"`;
     await prisma.membership.deleteMany({});
     await prisma.invitation.deleteMany({});
     await prisma.tenant.deleteMany({});
@@ -240,10 +246,10 @@ describe('ContentRequests (e2e)', () => {
     let activeRevisionId: string;
 
     async function seedReadyRevision(label: string) {
-      const content = await prisma.contentRequest.create({ data: { tenantId, createdById: ownerId, title: label, briefing: 'Briefing pronto para decisão editorial.', platform: 'INSTAGRAM_FEED', status: 'READY' } });
-      const generation = await prisma.contentGeneration.create({ data: { tenantId, contentRequestId: content.id, requestedById: ownerId, provider: 'fake', model: 'fake-v1', promptVersion: 'pt-BR-v1', idempotencyKey: `${label}-${content.id}`, status: 'SUCCEEDED', completedAt: new Date() } });
-      const generated = await prisma.generatedContent.create({ data: { tenantId, contentRequestId: content.id, generationId: generation.id, caption: 'Legenda inicial', callToAction: 'Saiba mais', hashtags: ['#Teste'], version: 1 } });
-      const revision = await prisma.contentRevision.create({ data: { tenantId, contentRequestId: content.id, generatedContentId: generated.id, createdById: ownerId, source: 'AI_GENERATED', caption: generated.caption, callToAction: generated.callToAction, hashtags: generated.hashtags, version: 1 } });
+      const content = await prisma.contentRequest.create({ data: { tenant: { connect: { id: tenantId } }, createdBy: { connect: { id: ownerId } }, title: label, briefing: 'Briefing pronto para decisão editorial.', platform: 'INSTAGRAM_FEED', status: 'READY' } });
+      const generation = await prisma.contentGeneration.create({ data: { tenant: { connect: { id: tenantId } }, contentRequest: { connect: { id: content.id } }, requestedBy: { connect: { id: ownerId } }, provider: 'fake', model: 'fake-v1', promptVersion: 'pt-BR-v1', idempotencyKey: `${label}-${content.id}`, status: 'SUCCEEDED', completedAt: new Date() } });
+      const generated = await prisma.generatedContent.create({ data: { tenant: { connect: { id: tenantId } }, contentRequest: { connect: { id: content.id } }, generation: { connect: { id: generation.id } }, caption: 'Legenda inicial', callToAction: 'Saiba mais', hashtags: ['#Teste'], version: 1 } });
+      const revision = await prisma.contentRevision.create({ data: { tenant: { connect: { id: tenantId } }, contentRequest: { connect: { id: content.id } }, generatedContent: { connect: { id: generated.id } }, createdBy: { connect: { id: ownerId } }, source: 'AI_GENERATED', caption: generated.caption, callToAction: generated.callToAction, hashtags: generated.hashtags, version: 1 } });
       return { content, revision };
     }
 

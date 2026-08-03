@@ -45,11 +45,14 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     await prisma.$executeRaw`ALTER TABLE public."AuditLog" DISABLE TRIGGER ALL`;
     await prisma.$executeRaw`TRUNCATE public."AuditLog" CASCADE`;
     await prisma.$executeRaw`ALTER TABLE public."AuditLog" ENABLE TRIGGER ALL`;
-    
+
     await prisma.$executeRaw`DELETE FROM public."Invitation"`;
     await prisma.$executeRaw`DELETE FROM public."ContentRevision"`;
     await prisma.$executeRaw`DELETE FROM public."GeneratedContent"`;
     await prisma.$executeRaw`DELETE FROM public."ContentGeneration"`;
+    await prisma.$executeRaw`DELETE FROM public."oauth_sessions"`;
+    await prisma.$executeRaw`DELETE FROM public."oauth_states"`;
+    await prisma.$executeRaw`DELETE FROM public."social_connections"`;
     await prisma.$executeRaw`DELETE FROM public."Membership"`;
     await prisma.$executeRaw`DELETE FROM public."ContentRequest"`;
     await prisma.$executeRaw`DELETE FROM public."Tenant"`;
@@ -254,7 +257,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
         expect(result[0].current_setting).toBe('');
       });
     });
-    
+
     it('contexto A não persiste após commit', async () => {
       await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SET LOCAL ROLE api_user`;
@@ -400,6 +403,94 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
         expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."ContentRevision" WHERE id = ${revisionA}::uuid`).length).toBe(0);
         expect(await tx.$executeRaw`UPDATE public."ContentRevision" SET caption = 'Hacked' WHERE id = ${revisionA}::uuid`).toBe(0);
         expect(await tx.$executeRaw`DELETE FROM public."ContentRevision" WHERE id = ${revisionB}::uuid`).toBe(0);
+      });
+    });
+  });
+
+  describe('OAUTH STATES RLS', () => {
+    const stateId1 = 'state_tenant_A';
+    const stateId2 = 'state_tenant_B';
+
+    beforeAll(async () => {
+      await prisma.$executeRaw`INSERT INTO public."oauth_states" ("stateHash", "tenantId", "userId", "provider", "expiresAt", "createdAt") VALUES (${stateId1}, ${tenantAId}::uuid, ${userIdA}::uuid, 'META_INSTAGRAM', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+      await prisma.$executeRaw`INSERT INTO public."oauth_states" ("stateHash", "tenantId", "userId", "provider", "expiresAt", "createdAt") VALUES (${stateId2}, ${tenantBId}::uuid, ${userIdB}::uuid, 'META_INSTAGRAM', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+    });
+
+    it('sem contexto não lê OAuthState', async () => {
+      await asUser('', null, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."oauth_states"`).length).toBe(0);
+      });
+    });
+
+    it('Tenant A só lê seus próprios states e não altera os de B', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const states = await tx.$queryRaw<any[]>`SELECT * FROM public."oauth_states"`;
+        expect(states.length).toBe(1);
+        expect(states[0].tenantId).toBe(tenantAId);
+
+        expect(await tx.$executeRaw`UPDATE public."oauth_states" SET "provider" = 'META_INSTAGRAM' WHERE "stateHash" = ${stateId2}`).toBe(0);
+        expect(await tx.$executeRaw`DELETE FROM public."oauth_states" WHERE "stateHash" = ${stateId2}`).toBe(0);
+      });
+    });
+
+    it('Tenant A não pode inserir state para Tenant B', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        await expect(tx.$executeRaw`INSERT INTO public."oauth_states" ("stateHash", "tenantId", "userId", "provider", "expiresAt", "createdAt") VALUES ('state_hack', ${tenantBId}::uuid, ${userIdA}::uuid, 'META_INSTAGRAM', NOW(), NOW())`).rejects.toThrow();
+      });
+    });
+  });
+
+  describe('OAUTH SESSIONS RLS', () => {
+    const sessionA = 'f1000000-0000-0000-0000-000000000001';
+    const sessionB = 'f2000000-0000-0000-0000-000000000002';
+
+    beforeAll(async () => {
+      await prisma.$executeRaw`INSERT INTO public."oauth_sessions" ("id", "tenantId", "userId", "provider", "accessTokenEncrypted", "expiresAt", "createdAt") VALUES (${sessionA}::uuid, ${tenantAId}::uuid, ${userIdA}::uuid, 'META_INSTAGRAM', 'enc', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+      await prisma.$executeRaw`INSERT INTO public."oauth_sessions" ("id", "tenantId", "userId", "provider", "accessTokenEncrypted", "expiresAt", "createdAt") VALUES (${sessionB}::uuid, ${tenantBId}::uuid, ${userIdB}::uuid, 'META_INSTAGRAM', 'enc', NOW(), NOW()) ON CONFLICT DO NOTHING`;
+    });
+
+    it('sem contexto não lê OAuthSession nem permite INSERT', async () => {
+      await asUser('', null, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."oauth_sessions"`).length).toBe(0);
+        await expect(tx.$executeRaw`INSERT INTO public."oauth_sessions" ("id", "tenantId", "userId", "provider", "accessTokenEncrypted", "expiresAt", "createdAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, ${userIdA}::uuid, 'META_INSTAGRAM', 'enc', NOW(), NOW())`).rejects.toThrow();
+      });
+    });
+
+    it('Tenant A isolado de Tenant B', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const sessions = await tx.$queryRaw<any[]>`SELECT * FROM public."oauth_sessions"`;
+        expect(sessions.length).toBe(1);
+        expect(sessions[0].tenantId).toBe(tenantAId);
+
+        expect(await tx.$executeRaw`DELETE FROM public."oauth_sessions" WHERE id = ${sessionB}::uuid`).toBe(0);
+      });
+    });
+  });
+
+  describe('SOCIAL CONNECTIONS RLS', () => {
+    const connA = 'e1000000-0000-0000-0000-000000000001';
+    const connB = 'e2000000-0000-0000-0000-000000000002';
+
+    beforeAll(async () => {
+      await prisma.$executeRaw`INSERT INTO public."social_connections" ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt") VALUES (${connA}::uuid, ${tenantAId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdA}::uuid, NOW(), NOW()) ON CONFLICT DO NOTHING`;
+      await prisma.$executeRaw`INSERT INTO public."social_connections" ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt") VALUES (${connB}::uuid, ${tenantBId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdB}::uuid, NOW(), NOW()) ON CONFLICT DO NOTHING`;
+    });
+
+    it('sem contexto falha fechado', async () => {
+      await asUser('', null, async (tx) => {
+        expect((await tx.$queryRaw<unknown[]>`SELECT * FROM public."social_connections"`).length).toBe(0);
+        await expect(tx.$executeRaw`INSERT INTO public."social_connections" ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt") VALUES (gen_random_uuid(), ${tenantAId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdA}::uuid, NOW(), NOW())`).rejects.toThrow();
+      });
+    });
+
+    it('Tenant A lê e deleta apenas a própria SocialConnection', async () => {
+      await asUser(userIdA, tenantAId, async (tx) => {
+        const conns = await tx.$queryRaw<any[]>`SELECT * FROM public."social_connections"`;
+        expect(conns.length).toBe(1);
+        expect(conns[0].tenantId).toBe(tenantAId);
+
+        expect(await tx.$executeRaw`UPDATE public."social_connections" SET "status" = 'ERROR' WHERE id = ${connB}::uuid`).toBe(0);
+        expect(await tx.$executeRaw`DELETE FROM public."social_connections" WHERE id = ${connB}::uuid`).toBe(0);
       });
     });
   });

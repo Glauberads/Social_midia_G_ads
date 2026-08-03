@@ -19,6 +19,13 @@ export const envSchema = z.object({
   GENERATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
   AI_PROVIDER: z.enum(['fake', 'openai-compatible']).default('fake'),
   AI_MODEL: z.string().min(1).default('fake-v1'),
+  // Social / Meta integration
+  SOCIAL_TOKEN_ENCRYPTION_KEY_V1: z.string().regex(/^[0-9a-fA-F]{64}$/, 'Must be 64 hex chars (32 bytes)').optional(),
+  META_APP_ID: z.string().min(1).optional(),
+  META_APP_SECRET: z.string().min(1).optional(),
+  META_REDIRECT_URI: z.string().url().optional(),
+  META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/, 'Must be in format v20.0').optional(),
+  SOCIAL_PROVIDER: z.enum(['fake', 'meta']).default('fake'),
 }).superRefine((data, ctx) => {
   if (data.NODE_ENV === 'production') {
     if (data.INVITATION_EXPOSE_RAW_TOKEN) {

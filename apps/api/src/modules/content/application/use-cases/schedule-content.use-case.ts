@@ -27,7 +27,7 @@ export class ScheduleContentUseCase {
     // Validate timezone
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: timezone });
-    } catch (e) {
+    } catch {
       throw new Error("INVALID_TIMEZONE");
     }
 

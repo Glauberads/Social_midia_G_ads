@@ -8,5 +8,6 @@
   },
   "transformIgnorePatterns": [
     "node_modules/(?!.*jose)"
-  ]
+  ],
+  "setupFiles": ["<rootDir>/setup.js"]
 }

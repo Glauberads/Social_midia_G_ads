@@ -49,6 +49,7 @@ model UserProfile {
   approvedRevisions    ContentRevision[]   @relation("RevisionApprover")
   scheduledContents    ContentSchedule[]   @relation("ScheduleCreator")
   canceledSchedules    ContentSchedule[]   @relation("ScheduleCanceler")
+  socialConnections    SocialConnection[]  @relation("SocialConnectionCreator")
 }
 
 model Tenant {
@@ -68,6 +69,7 @@ model Tenant {
   generatedContents  GeneratedContent[]
   contentRevisions   ContentRevision[]
   contentSchedules   ContentSchedule[]
+  socialConnections  SocialConnection[]
 }
 
 model Membership {
@@ -314,4 +316,74 @@ model ContentSchedule {
   @@index([revisionId])
   @@index([scheduledById])
   @@index([canceledById])
+}
+
+enum SocialProvider {
+  META_INSTAGRAM
+}
+
+enum SocialConnectionStatus {
+  PENDING
+  CONNECTED
+  EXPIRED
+  REVOKED
+  ERROR
+  DISCONNECTED
+}
+
+model OAuthState {
+  stateHash  String         @id
+  tenantId   String         @db.Uuid
+  userId     String         @db.Uuid
+  provider   SocialProvider
+  returnPath String?
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime       @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("oauth_states")
+}
+
+model OAuthSession {
+  id                   String         @id @default(uuid()) @db.Uuid
+  tenantId             String         @db.Uuid
+  userId               String         @db.Uuid
+  provider             SocialProvider
+  accessTokenEncrypted String
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  createdAt            DateTime       @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("oauth_sessions")
+}
+
+model SocialConnection {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  tenantId             String                 @db.Uuid
+  provider             SocialProvider
+  status               SocialConnectionStatus @default(PENDING)
+  externalAccountId    String?
+  externalAccountName  String?
+  pageId               String?
+  instagramAccountId   String?
+  scopes               String[]
+  accessTokenEncrypted String?
+  tokenExpiresAt       DateTime?
+  refreshMetadata      Json?
+  connectedById        String                 @db.Uuid
+  connectedAt          DateTime?              @default(now())
+  disconnectedAt       DateTime?
+  lastValidatedAt      DateTime?
+  lastErrorCode        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  connectedBy UserProfile @relation("SocialConnectionCreator", fields: [connectedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, provider])
+  @@map("social_connections")
 }

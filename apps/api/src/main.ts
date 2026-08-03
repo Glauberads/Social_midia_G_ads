@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { redactLog } from './modules/core/utils/redact.util';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger, Catch, ArgumentsHost, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
@@ -86,10 +87,11 @@ async function bootstrap() {
     },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'x-request-id'],
-    credentials: false,
+    credentials: true,
   });
 
   app.use(helmet());
+  app.use(cookieParser());
 
   app.setGlobalPrefix('api');
 

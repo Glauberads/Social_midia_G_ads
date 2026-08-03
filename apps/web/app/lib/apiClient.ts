@@ -31,6 +31,7 @@ export async function apiClient(endpoint: string, options: RequestInit = {}) {
 
   const response = await fetch(url, {
     ...options,
+    credentials: 'include', // Required to send HTTP-only session cookies cross-origin
     headers,
   });
 

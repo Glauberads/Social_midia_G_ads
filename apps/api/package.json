@@ -12,6 +12,7 @@
         "test:integration:memberships": "node test/memberships-integration.script.js",
         "test:integration:invitations": "jest test/invitations.e2e-spec.ts --config test/jest-e2e.json --runInBand",
         "test:integration:content": "jest test/content-requests.e2e-spec.ts --config test/jest-e2e.json --runInBand",
+        "test:integration:integrations": "jest test/integrations.e2e-spec.ts --config test/jest-e2e.json --runInBand",
         "test:rls": "jest test/rls.e2e-spec.ts --config test/jest-e2e.json --runInBand",
         "test:watch": "jest --watch"
     },
@@ -29,10 +30,11 @@
         "bullmq": "^5.58.5",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.15.1",
+        "cookie-parser": "^1.4.7",
         "helmet": "^8.3.0",
+        "ioredis": "^5.7.0",
         "jose": "^6.2.5",
         "jsonwebtoken": "^9.0.3",
-        "ioredis": "^5.7.0",
         "node-fetch": "2",
         "reflect-metadata": "^0.2.2",
         "rxjs": "^7.8.2",
@@ -41,6 +43,7 @@
     "devDependencies": {
         "@nestjs/testing": "^10.4.22",
         "@supabase/supabase-js": "^2.111.0",
+        "@types/cookie-parser": "^1.4.10",
         "@types/express": "^5.0.6",
         "@types/jest": "^29.0.0",
         "@types/jsonwebtoken": "^9.0.10",
