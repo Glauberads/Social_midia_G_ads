@@ -45,7 +45,6 @@ export class MetaErrorClassifier {
 
     const code = err.graphErrorCode;
     const subcode = err.graphErrorSubcode;
-    const type = err.graphErrorType;
 
     if (code !== undefined) {
       // https://developers.facebook.com/docs/graph-api/handling-errors/

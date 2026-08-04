@@ -26,6 +26,9 @@ import { ListAvailableAccountsUseCase } from '../application/use-cases/list-avai
 import { SelectSocialAccountUseCase } from '../application/use-cases/select-social-account.use-case';
 import { GetSocialConnectionStatusUseCase } from '../application/use-cases/get-social-connection-status.use-case';
 import { DisconnectSocialConnectionUseCase } from '../application/use-cases/disconnect-social-connection.use-case';
+import { GetSocialConnectionHealthUseCase } from '../application/use-cases/get-social-connection-health.use-case';
+import { ValidateSocialConnectionUseCase } from '../application/use-cases/validate-social-connection.use-case';
+import { RefreshSocialConnectionUseCase } from '../application/use-cases/refresh-social-connection.use-case';
 
 // ─── Mock Use Cases ───────────────────────────────────────────────────────────
 
@@ -37,9 +40,11 @@ const mockSelectAccount = { execute: jest.fn() };
 const mockStartOAuth = { execute: jest.fn() };
 const mockGetStatus = { execute: jest.fn() };
 const mockDisconnect = { execute: jest.fn() };
+const mockGetHealth = { execute: jest.fn() };
+const mockValidate = { execute: jest.fn() };
+const mockRefresh = { execute: jest.fn() };
 
 async function buildApp(nodeEnv = 'test'): Promise<INestApplication> {
-  const originalEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = nodeEnv;
 
   const module: TestingModule = await Test.createTestingModule({
@@ -51,6 +56,9 @@ async function buildApp(nodeEnv = 'test'): Promise<INestApplication> {
       { provide: SelectSocialAccountUseCase, useValue: mockSelectAccount },
       { provide: GetSocialConnectionStatusUseCase, useValue: mockGetStatus },
       { provide: DisconnectSocialConnectionUseCase, useValue: mockDisconnect },
+      { provide: GetSocialConnectionHealthUseCase, useValue: mockGetHealth },
+      { provide: ValidateSocialConnectionUseCase, useValue: mockValidate },
+      { provide: RefreshSocialConnectionUseCase, useValue: mockRefresh },
     ],
   }).compile();
 
@@ -67,16 +75,14 @@ async function buildApp(nodeEnv = 'test'): Promise<INestApplication> {
 
 describe('InstagramConnections — Cookie Security', () => {
   let app: INestApplication;
-  let originalEnv: string | undefined;
 
   beforeAll(async () => {
-    originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'test';
+    process.env.SUPABASE_URL = 'http://localhost:54321';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
     app = await buildApp('test');
   });
 
   afterAll(async () => {
-    process.env.NODE_ENV = originalEnv;
     await app.close();
   });
 

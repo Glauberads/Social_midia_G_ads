@@ -79,7 +79,7 @@ export class SocialConnectionHealthProcessor {
     return processedCount;
   }
 
-  private async handleValidate(tx: Prisma.TransactionClient, conn: any, accessToken: string) {
+  private async handleValidate(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string) {
     try {
       const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION}/me?fields=id,name&access_token=${accessToken}`);
       
@@ -107,7 +107,7 @@ export class SocialConnectionHealthProcessor {
     }
   }
 
-  private async handleRefresh(tx: Prisma.TransactionClient, conn: any, accessToken: string) {
+  private async handleRefresh(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string) {
     try {
       const now = new Date();
       await tx.socialConnection.update({
@@ -158,7 +158,7 @@ export class SocialConnectionHealthProcessor {
     }
   }
 
-  private async handleError(tx: Prisma.TransactionClient, conn: any, err: any) {
+  private async handleError(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, err: unknown) {
     const classification = this.classifyMetaError(err);
     const failureCount = conn.refreshFailureCount + 1;
     const now = new Date();
@@ -182,7 +182,7 @@ export class SocialConnectionHealthProcessor {
       data: {
         status: nextStatus,
         lastErrorAt: now,
-        lastErrorCategory: classification as any,
+        lastErrorCategory: classification as SocialConnectionErrorCategory,
         refreshFailureCount: clearToken ? 0 : failureCount,
         nextRefreshAt: clearToken ? null : nextRefreshAt,
         accessTokenEncrypted: clearToken ? null : conn.accessTokenEncrypted,
@@ -191,18 +191,19 @@ export class SocialConnectionHealthProcessor {
     });
   }
 
-  private classifyMetaError(err: any): SocialConnectionErrorCategory | 'INVALID_RESPONSE' {
-    if (err.status === 429) return 'RATE_LIMITED';
-    if (err.status >= 500) return 'TRANSIENT_ERROR';
-    if (err.code === 'TIMEOUT' || err.code === 'FETCH_ERROR') return 'TRANSIENT_ERROR';
+  private classifyMetaError(err: unknown): SocialConnectionErrorCategory | 'INVALID_RESPONSE' {
+    const error = err as Record<string, unknown>;
+    if (error.status === 429) return 'RATE_LIMITED';
+    if (typeof error.status === 'number' && error.status >= 500) return 'TRANSIENT_ERROR';
+    if (error.code === 'TIMEOUT' || error.code === 'FETCH_ERROR') return 'TRANSIENT_ERROR';
 
-    if (err.graphErrorCode === 190) {
-      if (err.graphErrorSubcode === 463 || err.graphErrorSubcode === 460) return 'EXPIRED';
+    if (error.graphErrorCode === 190) {
+      if (error.graphErrorSubcode === 463 || error.graphErrorSubcode === 460) return 'EXPIRED';
       return 'REVOKED';
     }
-    if (err.graphErrorCode === 10 || err.graphErrorCode === 200 || err.graphErrorCode === 2500) return 'PERMISSION_ERROR';
-    if (err.graphErrorCode === 4 || err.graphErrorCode === 17 || err.graphErrorCode === 32 || err.graphErrorCode === 613) return 'RATE_LIMITED';
-    if (err.graphErrorCode === 2) return 'TRANSIENT_ERROR';
+    if (error.graphErrorCode === 10 || error.graphErrorCode === 200 || error.graphErrorCode === 2500) return 'PERMISSION_ERROR';
+    if (error.graphErrorCode === 4 || error.graphErrorCode === 17 || error.graphErrorCode === 32 || error.graphErrorCode === 613) return 'RATE_LIMITED';
+    if (error.graphErrorCode === 2) return 'TRANSIENT_ERROR';
 
     return 'INVALID_RESPONSE';
   }
