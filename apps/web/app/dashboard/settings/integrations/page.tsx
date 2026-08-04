@@ -16,6 +16,10 @@ interface ConnectionStatus {
   connectedAt?: string;
   tokenExpiresAt?: string;
   lastValidatedAt?: string;
+  nextRefreshAt?: string;
+  lastErrorAt?: string;
+  lastErrorCategory?: string;
+  refreshFailureCount?: number;
 }
 
 interface InstagramAccount {
@@ -97,15 +101,22 @@ function InstagramIntegrationCard({
   onConnect,
   onReconnect,
   onDisconnect,
+  onValidate,
+  onRefresh,
   loading,
 }: {
   status: ConnectionStatus | null;
   onConnect: () => void;
   onReconnect: () => void;
   onDisconnect: () => void;
+  onValidate: () => void;
+  onRefresh: () => void;
   loading: boolean;
 }) {
   const connected = status?.status === 'CONNECTED';
+  const hasError = status?.status === 'ERROR';
+  const expiredOrRevoked = status?.status === 'EXPIRED' || status?.status === 'REVOKED';
+  const isEligibleForRefresh = status?.nextRefreshAt ? new Date(status.nextRefreshAt) <= new Date() : false;
 
   return (
     <article
@@ -142,10 +153,10 @@ function InstagramIntegrationCard({
         <div style={{ marginLeft: 'auto' }}>
           <span
             id="integration-status-badge"
-            className={`badge badge-${connected ? 'approved' : 'draft'}`}
+            className={`badge badge-${connected ? 'approved' : hasError ? 'danger' : expiredOrRevoked ? 'danger' : 'draft'}`}
             style={{ fontSize: 12 }}
           >
-            {connected ? 'Conectado' : status?.status === 'DISCONNECTED' ? 'Desconectado' : status?.status ?? 'Não conectado'}
+            {connected ? 'Conectado' : hasError ? 'Com Erro' : expiredOrRevoked ? (status?.status === 'EXPIRED' ? 'Expirado' : 'Revogado') : status?.status === 'DISCONNECTED' ? 'Desconectado' : status?.status ?? 'Não conectado'}
           </span>
         </div>
       </div>
@@ -181,6 +192,18 @@ function InstagramIntegrationCard({
               <span>{new Date(status.lastValidatedAt).toLocaleDateString('pt-BR')}</span>
             </div>
           )}
+          {status.nextRefreshAt && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--text-2)' }}>Próxima renovação</span>
+              <span>{new Date(status.nextRefreshAt).toLocaleDateString('pt-BR')}</span>
+            </div>
+          )}
+          {hasError && status.lastErrorCategory && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444' }}>
+              <span style={{ color: 'inherit' }}>Último erro</span>
+              <span>{status.lastErrorCategory} ({status.refreshFailureCount} falhas)</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -205,7 +228,7 @@ function InstagramIntegrationCard({
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        {!connected ? (
+        {!connected && !hasError && !expiredOrRevoked ? (
           <button
             id="btn-connect-instagram"
             className="button button-primary"
@@ -217,14 +240,37 @@ function InstagramIntegrationCard({
           </button>
         ) : (
           <>
-            <button
-              id="btn-reconnect-instagram"
-              className="button button-secondary"
-              onClick={onReconnect}
-              disabled={loading}
-            >
-              🔄 Reconectar
-            </button>
+            {(connected || hasError) && (
+              <>
+                <button
+                  id="btn-validate-instagram"
+                  className="button button-secondary"
+                  onClick={onValidate}
+                  disabled={loading}
+                >
+                  🔍 Validar Conexão
+                </button>
+                <button
+                  id="btn-refresh-instagram"
+                  className="button button-secondary"
+                  onClick={onRefresh}
+                  disabled={loading || (!isEligibleForRefresh && !hasError)}
+                  title={!isEligibleForRefresh && !hasError ? 'Renovação não elegível no momento' : 'Renovar Acesso'}
+                >
+                  🔄 Renovar Acesso
+                </button>
+              </>
+            )}
+            {expiredOrRevoked && (
+              <button
+                id="btn-reconnect-instagram"
+                className="button button-primary"
+                onClick={onReconnect}
+                disabled={loading}
+              >
+                🔗 Reconectar Instagram
+              </button>
+            )}
             <button
               id="btn-disconnect-instagram"
               className="button button-danger"
@@ -254,7 +300,7 @@ export default function IntegrationsPage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const data = await apiClient('/integrations/meta/status');
+      const data = await apiClient('/integrations/meta/health');
       setStatus(data);
       setPhase('idle');
     } catch (err) {
@@ -363,6 +409,28 @@ export default function IntegrationsPage() {
     }
   };
 
+  const handleValidate = async () => {
+    setPhase('loading');
+    try {
+      await apiClient('/integrations/meta/validate', { method: 'POST' });
+      await fetchStatus();
+    } catch (err) {
+      setErrorMsg(safeErrorMessage(err, 'Erro ao validar conexão.'));
+      setPhase('idle');
+    }
+  };
+
+  const handleRefresh = async () => {
+    setPhase('loading');
+    try {
+      await apiClient('/integrations/meta/refresh', { method: 'POST' });
+      await fetchStatus();
+    } catch (err) {
+      setErrorMsg(safeErrorMessage(err, 'Erro ao renovar conexão.'));
+      setPhase('idle');
+    }
+  };
+
   return (
     <>
       <div className="page-wrapper">
@@ -398,6 +466,8 @@ export default function IntegrationsPage() {
             onConnect={handleConnect}
             onReconnect={handleConnect}
             onDisconnect={() => setPhase('confirming-disconnect')}
+            onValidate={handleValidate}
+            onRefresh={handleRefresh}
             loading={phase === 'loading'}
           />
         )}

@@ -16,7 +16,7 @@ export class FakeSocialProviderAdapter implements SocialProviderAdapter {
 
   /** Controls behaviour for tests — inject before calling methods. */
   public scenario: 'two-accounts' | 'one-account' | 'no-accounts' | 'no-ig-linked' | 'timeout'
-    | '429' | '500' | 'malformed' | 'token-invalid' | 'token-revoked' = 'two-accounts';
+    | '429' | '500' | 'malformed' | 'token-invalid' | 'token-revoked' | 'token-expired' = 'two-accounts';
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   buildAuthorizationUrl(state: string, redirectUri: string, _scopes: string[]): string {
@@ -90,11 +90,18 @@ export class FakeSocialProviderAdapter implements SocialProviderAdapter {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async validateConnection(_accessToken: string): Promise<{ valid: boolean; userId?: string }> {
-    if (this.scenario === 'token-invalid' || this.scenario === 'token-revoked') {
-      return { valid: false };
+  async validateConnection(_accessToken: string): Promise<{ userId: string }> {
+    await this._maybeThrow();
+    if (this.scenario === 'token-invalid') {
+      throw Object.assign(new Error('Token is invalid'), { graphErrorCode: 190 });
     }
-    return { valid: true, userId: 'fake-user-123' };
+    if (this.scenario === 'token-revoked') {
+      throw Object.assign(new Error('Token is revoked'), { graphErrorCode: 190, graphErrorSubcode: 458 });
+    }
+    if (this.scenario === 'token-expired') {
+      throw Object.assign(new Error('Token is expired'), { graphErrorCode: 190, graphErrorSubcode: 463 });
+    }
+    return { userId: 'fake-user-123' };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

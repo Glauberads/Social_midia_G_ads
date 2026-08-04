@@ -27,8 +27,9 @@ describe('content generation worker', () => {
   });
 
   it('blocks fake provider in production and requires a key for the real provider', () => {
-    expect(() => loadConfig({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://db', AI_PROVIDER: 'fake' })).toThrow('AI_PROVIDER');
-    expect(() => loadConfig({ NODE_ENV: 'development', DATABASE_URL: 'postgresql://db', AI_PROVIDER: 'openai-compatible' })).toThrow('AI_API_KEY');
+    const baseEnv = { ENCRYPTION_KEY: 'a'.repeat(64), META_APP_ID: 'x', META_APP_SECRET: 'y', META_GRAPH_API_VERSION: 'v18.0' };
+    expect(() => loadConfig({ ...baseEnv, NODE_ENV: 'production', DATABASE_URL: 'postgresql://db', AI_PROVIDER: 'fake' })).toThrow('AI_PROVIDER');
+    expect(() => loadConfig({ ...baseEnv, NODE_ENV: 'development', DATABASE_URL: 'postgresql://db', AI_PROVIDER: 'openai-compatible' })).toThrow('AI_API_KEY');
   });
 
   it('versions the prompt and avoids instructions to invent facts', () => {

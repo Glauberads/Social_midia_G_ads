@@ -85,13 +85,11 @@ describe('FakeSocialProviderAdapter', () => {
 
   it('validates connection as invalid for token-invalid scenario', async () => {
     adapter.scenario = 'token-invalid';
-    const result = await adapter.validateConnection('bad');
-    expect(result.valid).toBe(false);
+    await expect(adapter.validateConnection('bad')).rejects.toThrow('Token is invalid');
   });
 
   it('validates connection as valid in normal scenario', async () => {
     const result = await adapter.validateConnection('good-token');
-    expect(result.valid).toBe(true);
     expect(result.userId).toBe('fake-user-123');
   });
 

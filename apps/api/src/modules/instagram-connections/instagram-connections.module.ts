@@ -7,6 +7,9 @@ import { ListAvailableAccountsUseCase } from './application/use-cases/list-avail
 import { SelectSocialAccountUseCase } from './application/use-cases/select-social-account.use-case';
 import { GetSocialConnectionStatusUseCase } from './application/use-cases/get-social-connection-status.use-case';
 import { DisconnectSocialConnectionUseCase } from './application/use-cases/disconnect-social-connection.use-case';
+import { GetSocialConnectionHealthUseCase } from './application/use-cases/get-social-connection-health.use-case';
+import { ValidateSocialConnectionUseCase } from './application/use-cases/validate-social-connection.use-case';
+import { RefreshSocialConnectionUseCase } from './application/use-cases/refresh-social-connection.use-case';
 import { FakeSocialProviderAdapter } from './infrastructure/adapters/fake-social.adapter';
 import { MetaInstagramAdapter } from './infrastructure/adapters/meta-instagram.adapter';
 import { SOCIAL_PROVIDER_ADAPTER } from './domain/ports/social-provider.adapter';
@@ -22,6 +25,9 @@ import { TenantsModule } from '../tenants/tenants.module';
     SelectSocialAccountUseCase,
     GetSocialConnectionStatusUseCase,
     DisconnectSocialConnectionUseCase,
+    GetSocialConnectionHealthUseCase,
+    ValidateSocialConnectionUseCase,
+    RefreshSocialConnectionUseCase,
     FakeSocialProviderAdapter,
     MetaInstagramAdapter,
     {

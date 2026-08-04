@@ -322,6 +322,15 @@ enum SocialProvider {
   META_INSTAGRAM
 }
 
+enum SocialConnectionErrorCategory {
+  TRANSIENT_ERROR
+  RATE_LIMITED
+  EXPIRED
+  REVOKED
+  PERMISSION_ERROR
+  INVALID_RESPONSE
+}
+
 enum SocialConnectionStatus {
   PENDING
   CONNECTED
@@ -360,23 +369,30 @@ model OAuthSession {
 }
 
 model SocialConnection {
-  id                   String                 @id @default(uuid()) @db.Uuid
-  tenantId             String                 @db.Uuid
-  provider             SocialProvider
-  status               SocialConnectionStatus @default(PENDING)
-  externalAccountId    String?
-  externalAccountName  String?
-  pageId               String?
-  instagramAccountId   String?
-  scopes               String[]
-  accessTokenEncrypted String?
-  tokenExpiresAt       DateTime?
-  refreshMetadata      Json?
-  connectedById        String                 @db.Uuid
-  connectedAt          DateTime?              @default(now())
-  disconnectedAt       DateTime?
-  lastValidatedAt      DateTime?
-  lastErrorCode        String?
+  id                    String                         @id @default(uuid()) @db.Uuid
+  tenantId              String                         @db.Uuid
+  provider              SocialProvider
+  status                SocialConnectionStatus         @default(PENDING)
+  externalAccountId     String?
+  externalAccountName   String?
+  pageId                String?
+  instagramAccountId    String?
+  scopes                String[]
+  accessTokenEncrypted  String?
+  tokenExpiresAt        DateTime?
+  refreshMetadata       Json?
+  connectedById         String                         @db.Uuid
+  connectedAt           DateTime?                      @default(now())
+  disconnectedAt        DateTime?
+  lastValidatedAt       DateTime?
+  lastErrorCode         String?
+  lastRefreshAttemptAt  DateTime?
+  lastRefreshSuccessAt  DateTime?
+  nextRefreshAt         DateTime?
+  refreshFailureCount   Int                            @default(0)
+  processingLockedUntil DateTime?
+  lastErrorAt           DateTime?
+  lastErrorCategory     SocialConnectionErrorCategory?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -171,21 +171,17 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
     return accounts;
   }
 
-  async validateConnection(accessToken: string): Promise<{ valid: boolean; userId?: string }> {
+  async validateConnection(accessToken: string): Promise<{ userId: string }> {
     const params = new URLSearchParams({
       fields: 'id,name',
       access_token: accessToken,
     });
-    try {
-      const data = await this.fetchWithRetry<z.infer<typeof ValidateResponseSchema>>(
-        `${this.baseUrl}/me?${params}`,
-        { method: 'GET' },
-        ValidateResponseSchema,
-      );
-      return { valid: true, userId: data.id };
-    } catch {
-      return { valid: false };
-    }
+    const data = await this.fetchWithRetry<z.infer<typeof ValidateResponseSchema>>(
+      `${this.baseUrl}/me?${params}`,
+      { method: 'GET' },
+      ValidateResponseSchema,
+    );
+    return { userId: data.id };
   }
 
   async revoke(accessToken: string): Promise<void> {
@@ -243,9 +239,26 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
         await sleep(delay);
         return this.fetchWithRetry(url, init, schema, attempt + 1);
       }
-      void response.text().catch(() => ''); // consume body — not logged for security
+      let errCode: number | undefined;
+      let errSubcode: number | undefined;
+      let errType: string | undefined;
+      try {
+        const bodyText = await response.text();
+        const bodyJson = JSON.parse(bodyText);
+        errCode = bodyJson?.error?.code;
+        errSubcode = bodyJson?.error?.error_subcode;
+        errType = bodyJson?.error?.type;
+      } catch {
+        // ignore parsing errors
+      }
       this.logger.error(`[MetaInstagramAdapter] HTTP ${status} — response body redacted`);
-      throw Object.assign(new Error(`Meta Graph API error: HTTP ${status}`), { code: 'PROVIDER_ERROR', status });
+      throw Object.assign(new Error(`Meta Graph API error: HTTP ${status}`), { 
+        code: 'PROVIDER_ERROR', 
+        status, 
+        graphErrorCode: errCode,
+        graphErrorSubcode: errSubcode,
+        graphErrorType: errType
+      });
     }
 
     let json: unknown;

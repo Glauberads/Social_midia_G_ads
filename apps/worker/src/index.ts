@@ -7,6 +7,7 @@ import { ContentGenerationProcessor, ContentGenerationJob } from './processor';
 import { FakeContentGenerationProvider } from './providers/fake.provider';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider';
 import { DueScheduleProcessor } from './due-processor';
+import { SocialConnectionHealthProcessor } from './instagram-connections/social-connection-health.processor';
 
 export const CONTENT_GENERATION_QUEUE = 'content-generation';
 
@@ -32,8 +33,14 @@ export async function startWorker() {
     dueProcessor.processBatch().catch((err) => console.error(JSON.stringify({ event: 'due_processor_error', error: err.message })));
   }, 10000); // Check every 10 seconds
 
+  const healthProcessor = new SocialConnectionHealthProcessor(prisma);
+  const healthInterval = setInterval(() => {
+    healthProcessor.processBatch().catch((err) => console.error(JSON.stringify({ event: 'health_processor_error', error: err.message })));
+  }, 60000); // Check every minute
+
   const shutdown = async () => { 
     clearInterval(dueInterval);
+    clearInterval(healthInterval);
     await worker.close(); 
     await connection.quit(); 
     await prisma.$disconnect(); 

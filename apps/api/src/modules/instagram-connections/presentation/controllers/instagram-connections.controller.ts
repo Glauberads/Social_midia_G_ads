@@ -18,6 +18,9 @@ import { ListAvailableAccountsUseCase } from '../../application/use-cases/list-a
 import { SelectSocialAccountUseCase } from '../../application/use-cases/select-social-account.use-case';
 import { GetSocialConnectionStatusUseCase } from '../../application/use-cases/get-social-connection-status.use-case';
 import { DisconnectSocialConnectionUseCase } from '../../application/use-cases/disconnect-social-connection.use-case';
+import { GetSocialConnectionHealthUseCase } from '../../application/use-cases/get-social-connection-health.use-case';
+import { ValidateSocialConnectionUseCase } from '../../application/use-cases/validate-social-connection.use-case';
+import { RefreshSocialConnectionUseCase } from '../../application/use-cases/refresh-social-connection.use-case';
 import { ConnectDto, SelectAccountDto } from '../../application/dto/instagram-connections.dto';
 import { TenantScoped } from '../../../auth/decorators/tenant-scoped.decorator';
 import { RequireRoles } from '../../../auth/decorators/require-roles.decorator';
@@ -39,6 +42,9 @@ export class InstagramConnectionsController {
     private readonly selectAccount: SelectSocialAccountUseCase,
     private readonly getStatus: GetSocialConnectionStatusUseCase,
     private readonly disconnect: DisconnectSocialConnectionUseCase,
+    private readonly getHealth: GetSocialConnectionHealthUseCase,
+    private readonly validateConn: ValidateSocialConnectionUseCase,
+    private readonly refreshConn: RefreshSocialConnectionUseCase,
   ) {}
 
   /** Step 1: Start OAuth flow — returns the Meta authorization URL */
@@ -165,6 +171,33 @@ export class InstagramConnectionsController {
       tokenExpiresAt: result.tokenExpiresAt,
       lastValidatedAt: result.lastValidatedAt,
     };
+  }
+
+  @Get('health')
+  @TenantScoped()
+  async health() {
+    const result = await this.getHealth.execute();
+    if (!result) return { connected: false };
+    return {
+      connected: result.status === 'CONNECTED',
+      ...result,
+    };
+  }
+
+  @Post('validate')
+  @TenantScoped()
+  @RequireRoles(Role.OWNER, Role.ADMIN)
+  async validateRemote() {
+    const result = await this.validateConn.execute();
+    return result;
+  }
+
+  @Post('refresh')
+  @TenantScoped()
+  @RequireRoles(Role.OWNER, Role.ADMIN)
+  async refreshRemote() {
+    const result = await this.refreshConn.execute(true);
+    return result;
   }
 
   /** Disconnect Meta/Instagram account */

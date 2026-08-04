@@ -24,8 +24,8 @@ export interface SocialProviderAdapter {
   /** Lists Instagram Professional accounts linked to Facebook Pages accessible by the user. */
   listAvailableAccounts(accessToken: string): Promise<InstagramAccount[]>;
 
-  /** Validates that the token is still valid and the connection is healthy. */
-  validateConnection(accessToken: string): Promise<{ valid: boolean; userId?: string }>;
+  /** Validates that the token is still valid and the connection is healthy. Throws if invalid. */
+  validateConnection(accessToken: string): Promise<{ userId: string }>;
 
   /** Attempts to revoke the token (best-effort). */
   revoke(accessToken: string): Promise<void>;
