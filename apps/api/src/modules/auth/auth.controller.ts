@@ -11,8 +11,11 @@ export class AuthController {
 
   @Get('me')
   async getMe(@CurrentUser() identity: AuthenticatedIdentity) {
-    const profile = await this.prisma.userProfile.findUnique({
-      where: { id: identity.userId },
+    const profile = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.user_id', ${identity.userId}, true)`;
+      return tx.userProfile.findUnique({
+        where: { id: identity.userId },
+      });
     });
 
     if (!profile) {

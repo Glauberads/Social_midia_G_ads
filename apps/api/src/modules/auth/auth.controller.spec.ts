@@ -9,10 +9,15 @@ describe('AuthController', () => {
   let prismaService: PrismaService;
 
   beforeEach(async () => {
+    const userProfile = {
+      findUnique: jest.fn(),
+    };
     const mockPrismaService = {
-      userProfile: {
-        findUnique: jest.fn(),
-      },
+      userProfile,
+      $transaction: jest.fn(async (work) => work({
+        $executeRaw: jest.fn(),
+        userProfile,
+      })),
     };
 
     const module: TestingModule = await Test.createTestingModule({
