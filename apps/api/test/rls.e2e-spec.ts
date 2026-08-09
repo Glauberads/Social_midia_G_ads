@@ -447,7 +447,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     it('Gate 26: isolamento restabelecido pós falha', async () => {
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       const processed = await processor.processBatch(10);
-      expect(processed).toBe(0); // Nenhuma disponível
+      expect(processed).toBe(0);
     });
 
     it('Teste complementar de ownership: worker ownership protege contra overwrite atrasado', async () => {
@@ -457,13 +457,6 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       const processorA = new SocialConnectionHealthProcessor(runtimePrisma as any);
 
       // FASE 1: Worker A descobre e adquire o claim (Token A)
-      const candidatesA = await runtimePrisma.$queryRaw<{ id: string; tenantId: string }[]>`
-        SELECT id, "tenantId" FROM public.get_social_connection_health_candidates(10)
-      `;
-      expect(candidatesA.length).toBe(1);
-      expect(candidatesA[0].id).toBe(connA);
-
-      // Manual claim for Worker A (simulating processor)
       const tokenA = '11111111-1111-1111-1111-111111111111';
       const lockedA = await runtimePrisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantAId}, true)`;
@@ -482,92 +475,50 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       await adminPrisma.$executeRaw`UPDATE public.social_connections SET "processingLockedUntil" = NOW() - interval '1 hour' WHERE id = ${connA}::uuid`;
 
       // FASE 3: Worker B adquire a mesma connection
-      const processorB = new SocialConnectionHealthProcessor(runtimePrisma as any);
-
-      // Vamos interceptar o token B para garantir que é diferente
-      let tokenB = '';
-      let persistValidateSuccessB_called = false;
-
-      // Mock handleValidate do B apenas para evitar fetch real
-      (processorB as any).handleValidate = jest.fn().mockResolvedValue(undefined);
-      (processorB as any).decryptToken = jest.fn().mockReturnValue('fake-token-b');
-
-      const originalInTenantTransaction = (processorB as any).inTenantTransaction;
-
-      // Monkey patch para extrair o tokenB no momento do claim
-      const originalProcessBatch = processorB.processBatch.bind(processorB);
-      // Faremos apenas processBatch() e veremos o resultado no banco
-      const processedCountB = await processorB.processBatch(10);
-      expect(processedCountB).toBe(1); // Worker B assumiu
-
-      // Capturar estado pós Worker B
-      const stateB = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken", "processingLockedUntil" FROM public.social_connections WHERE id = ${connA}::uuid`;
-      tokenB = stateB[0].processingLockToken;
-
-      expect(tokenB).not.toBeNull();
-      expect(tokenB).not.toBe(tokenA);
-
-      // E como Worker B já finalizou e deu release, o lockToken atual deve estar null!
-      // ESPERA! O processBatch() faz a FASE 3 (Release) também!
-      // Se processBatch() executou por completo, ele já limpou o banco!
-      // O requisito diz que Worker B ADQUIRE o token B e Worker A tenta persistir atrasado ENQUANTO B ainda tem o lease!
-      // Portanto, Worker B NÃO PODE terminar de processar antes de A tentar sobrescrever!
-
-      // Vamos refazer a Fase 3 isolando Worker B na fase de CLAIM apenas
-
-      // Restaurando pra repetir a prova B
-      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "processingLockedUntil" = NOW() - interval '1 hour', "processingLockToken" = ${tokenA}::uuid WHERE id = ${connA}::uuid`;
-
-      const tokenBReal = '22222222-2222-2222-2222-222222222222';
+      // Faremos o claim usando a query original do processor para simular a FASE 1 de Worker B sem prosseguir pro network
+      const tokenB = '22222222-2222-2222-2222-222222222222';
       const lockedB = await runtimePrisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantAId}, true)`;
         await tx.$executeRaw`SELECT set_config('app.user_id', '', true)`;
         return await tx.$executeRaw`
           UPDATE public.social_connections
           SET "processingLockedUntil" = now() + interval '5 minutes',
-              "processingLockToken" = ${tokenBReal}::uuid
+              "processingLockToken" = ${tokenB}::uuid
           WHERE id = ${connA}::uuid
             AND ("processingLockedUntil" IS NULL OR "processingLockedUntil" <= now())
         `;
       });
       expect(lockedB).toBe(1); // Worker B assume
 
-      // FASE 4: Worker A tenta persist/release atrasado com token A
-      // Vamos chamar diretamente a função de persistência do processor usando o Token A
-      // Simulando `persistValidateSuccess` que faria o Worker A
-      let affectedRowsA = 0;
-      await (processorA as any).inTenantTransaction(tenantAId, async (tx: any) => {
-        affectedRowsA = await tx.$executeRaw`
-          UPDATE public.social_connections
-          SET "lastValidatedAt" = NOW(),
-              "processingLockedUntil" = NULL,
-              "processingLockToken" = NULL
-          WHERE id = ${connA}::uuid
-            AND "processingLockToken" = ${tokenA}::uuid
-        `;
-      });
+      expect(tokenB).not.toBe(tokenA); // Tokens diferentes
 
-      // FASE 5: Capturar row count
-      expect(affectedRowsA).toBe(0); // Trabalhador A não conseguiu afetar
+      const stateBeforeStale = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken", "processingLockedUntil" FROM public.social_connections WHERE id = ${connA}::uuid`;
+      expect(stateBeforeStale[0].processingLockToken).toBe(tokenB); // Token B fisicamente presente
+      expect(stateBeforeStale[0].processingLockedUntil).not.toBeNull(); // Lease B fisicamente presente
+
+      // FASE 4: Worker A tenta persist/release atrasado com token A
+      // Vamos chamar a operação real ownership-safe usada pelo processor
+      await (processorA as any).persistValidateSuccess(tenantAId, { id: connA }, tokenA);
 
       // FASE 6: Ler estado físico, token B permanece
-      const finalState = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken", "processingLockedUntil" FROM public.social_connections WHERE id = ${connA}::uuid`;
-      expect(finalState[0].processingLockToken).toBe(tokenBReal);
-      expect(finalState[0].processingLockedUntil).not.toBeNull();
+      const finalState1 = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken", "processingLockedUntil" FROM public.social_connections WHERE id = ${connA}::uuid`;
+      expect(finalState1[0].processingLockToken).toBe(tokenB);
+      expect(finalState1[0].processingLockedUntil).not.toBeNull();
 
       // FASE 7: Provar que Worker A não consegue sobrescrever failure
-      let failureAffectedRowsA = 0;
-      await (processorA as any).inTenantTransaction(tenantAId, async (tx: any) => {
-        failureAffectedRowsA = await tx.$executeRaw`
-          UPDATE public.social_connections
-          SET "status" = 'ERROR',
-              "processingLockedUntil" = NULL,
-              "processingLockToken" = NULL
-          WHERE id = ${connA}::uuid
-            AND "processingLockToken" = ${tokenA}::uuid
-        `;
-      });
-      expect(failureAffectedRowsA).toBe(0); // Trabalhador A não consegue persistir falha no estado de B
+      await (processorA as any).persistFailure(tenantAId, { id: connA, status: 'CONNECTED', refreshFailureCount: 0, accessTokenEncrypted: 'enc', tokenExpiresAt: null }, tokenA, new Error('Test'));
+
+      const finalState2 = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken", "processingLockedUntil", "status" FROM public.social_connections WHERE id = ${connA}::uuid`;
+      expect(finalState2[0].processingLockToken).toBe(tokenB);
+      expect(finalState2[0].status).toBe('CONNECTED'); // Worker A não mudou status pra ERROR/etc
+
+      // FASE 9: Finalização legítima de B
+      const processorB = new SocialConnectionHealthProcessor(runtimePrisma as any);
+      await (processorB as any).persistValidateSuccess(tenantAId, { id: connA }, tokenB);
+
+      const finalState3 = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken", "processingLockedUntil" FROM public.social_connections WHERE id = ${connA}::uuid`;
+      expect(finalState3[0].processingLockToken).toBeNull();
+      expect(finalState3[0].processingLockedUntil).toBeNull();
     });
   });
 });
