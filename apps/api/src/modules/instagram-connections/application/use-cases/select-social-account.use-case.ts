@@ -4,15 +4,12 @@ import {
   Inject,
   BadRequestException,
   NotFoundException,
-  GoneException,
-  UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import { TenantContextService } from '../../../tenants/application/tenant-context.service';
 import { SOCIAL_PROVIDER_ADAPTER, SocialProviderAdapter } from '../../domain/ports/social-provider.adapter';
 import { TokenEncryptionService } from '../../../core/utils/crypto.service';
-import { randomUUID } from 'crypto';
 
 
 export interface SelectSocialAccountInput {
@@ -26,7 +23,7 @@ export class SelectSocialAccountUseCase {
   private readonly logger = new Logger(SelectSocialAccountUseCase.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly tenantTransaction: TenantTransactionService,
     private readonly tenantContext: TenantContextService,
     @Inject(SOCIAL_PROVIDER_ADAPTER)
     private readonly adapter: SocialProviderAdapter,
@@ -41,130 +38,131 @@ export class SelectSocialAccountUseCase {
       throw new ForbiddenException('Only OWNER or ADMIN can select a social account.');
     }
 
-    // Atomically consume session and create/update SocialConnection
-    await this.prisma.$transaction(async (tx) => {
-      const session = await tx.oAuthSession.findUnique({ where: { id: input.sessionId } });
-
-      if (!session || session.tenantId !== tenantId) {
+    // 1. Fetch session inside RLS (Read-Only phase)
+    const session = await this.tenantTransaction.execute(scope, async (tx) => {
+      const s = await tx.oAuthSession.findUnique({ where: { id: input.sessionId } });
+      if (!s) {
         throw new NotFoundException('OAuth session not found.');
       }
-      if (session.userId !== userId) {
-        throw new UnauthorizedException('OAuth session belongs to a different user.');
+      if (s.tenantId !== tenantId) {
+        throw new ForbiddenException('Session does not belong to your tenant.');
       }
-      if (session.consumedAt !== null) {
-        throw new GoneException('OAuth session has already been used.');
+      if (s.expiresAt < new Date()) {
+        throw new BadRequestException('OAuth session has expired.');
       }
-      if (session.expiresAt < new Date()) {
-        throw new GoneException('OAuth session has expired.');
+      if (s.consumedAt !== null) {
+        throw new BadRequestException('OAuth session already consumed.');
+      }
+      return s;
+    });
+
+    // 2. Decrypt token securely 
+    const sessionPlainToken = this.encryption.decrypt(session.accessTokenEncrypted, {
+      kind: 'oauth-session',
+      tenantId,
+      sessionId: session.id,
+      provider: 'META_INSTAGRAM',
+    });
+
+    // 3. Network call to validate selected account OUTSIDE of transaction
+    let accounts: Awaited<ReturnType<SocialProviderAdapter['listAvailableAccounts']>>;
+    try {
+      accounts = await this.adapter.listAvailableAccounts(sessionPlainToken);
+    } catch (err) {
+      this.logger.error('[SelectSocialAccount] failed to re-verify accounts from provider');
+      throw err;
+    }
+
+    const selected = accounts.find(
+      (a) => a.instagramAccountId === input.instagramAccountId && a.pageId === input.pageId,
+    );
+
+    if (!selected) {
+      throw new BadRequestException('The selected account/page combination is not accessible by this token.');
+    }
+
+    // 4. Transactionally consume session and upsert SocialConnection
+    await this.tenantTransaction.execute(scope, async (tx) => {
+      const s2 = await tx.oAuthSession.findUnique({ where: { id: input.sessionId } });
+      if (!s2 || s2.consumedAt !== null) {
+        throw new BadRequestException('Session has been consumed concurrently.');
       }
 
-      // Decrypt token to validate account selection against provider
-      const plainToken = this.encryption.decrypt(session.accessTokenEncrypted, {
-        kind: 'oauth-session',
-        tenantId,
-        sessionId: input.sessionId,
-        provider: 'META_INSTAGRAM',
-      });
-
-      // Verify the selected account is actually linked (re-consult provider)
-      let accounts: Awaited<ReturnType<SocialProviderAdapter['listAvailableAccounts']>>;
-      try {
-        accounts = await this.adapter.listAvailableAccounts(plainToken);
-      } catch (err) {
-        this.logger.error('[SelectSocialAccount] failed to re-verify accounts from provider');
-        throw err;
-      }
-
-      const selected = accounts.find(
-        (a) => a.instagramAccountId === input.instagramAccountId && a.pageId === input.pageId,
-      );
-
-      if (!selected) {
-        throw new BadRequestException(
-          'The selected account/page combination is not accessible by this token.',
-        );
-      }
-
-      // Mark session as consumed
       await tx.oAuthSession.update({
         where: { id: input.sessionId },
-        data: { consumedAt: new Date() },
+        data: { consumedAt: new Date() }
       });
 
-      // Encrypt the long-lived token for permanent storage
-      // Use upsert — one row per tenant/provider
-      const now = new Date();
-      const existingConnection = await tx.socialConnection.findUnique({
+      // 5. Encrypt the token specifically for the final connection
+      // We need connection ID before encryption.
+      let conn = await tx.socialConnection.findUnique({
         where: { tenantId_provider: { tenantId, provider: 'META_INSTAGRAM' } },
       });
 
-      const connectionId = existingConnection?.id ?? randomUUID();
+      if (!conn) {
+        conn = await tx.socialConnection.create({
+          data: {
+            tenantId,
+            provider: 'META_INSTAGRAM',
+            status: 'DISCONNECTED', // temporary until encrypted
+            connectedById: userId,
+            accessTokenEncrypted: 'placeholder', // update later
+          },
+        });
+      }
 
-      const encryptedToken = this.encryption.encrypt(plainToken, {
+      const connEncrypted = this.encryption.encrypt(sessionPlainToken, {
         kind: 'social-token',
         tenantId,
-        connectionId,
+        connectionId: conn.id,
         provider: 'META_INSTAGRAM',
       });
 
-      await tx.socialConnection.upsert({
-        where: { tenantId_provider: { tenantId, provider: 'META_INSTAGRAM' } },
-        create: {
-          id: connectionId,
-          tenantId,
-          provider: 'META_INSTAGRAM',
+      // 4. Update the connection with the final data
+      const nextRefreshAt = new Date(Date.now() + 50 * 24 * 60 * 60 * 1000); // 50 days refresh
+
+      await tx.socialConnection.update({
+        where: { id: conn.id },
+        data: {
           status: 'CONNECTED',
-          pageId: selected.pageId,
-          externalAccountName: selected.pageName,
-          instagramAccountId: selected.instagramAccountId,
-          scopes: ['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
-          accessTokenEncrypted: encryptedToken,
-          connectedById: userId,
-          connectedAt: now,
+          accessTokenEncrypted: connEncrypted,
+          tokenExpiresAt: null, // long lived
           refreshMetadata: {
+            pageId: selected.pageId,
+            instagramId: selected.instagramAccountId,
+            pageName: selected.pageName,
+            instagramUsername: selected.instagramUsername,
             tokenType: 'facebook',
-            issuedAt: now.toISOString(),
-            lastExchangeAt: now.toISOString(),
             graphApiVersion: 'v20.0',
-          },
-        },
-        update: {
-          status: 'CONNECTED',
-          pageId: selected.pageId,
-          externalAccountName: selected.pageName,
-          instagramAccountId: selected.instagramAccountId,
-          accessTokenEncrypted: encryptedToken,
+          } as any,
           connectedById: userId,
-          connectedAt: now,
-          disconnectedAt: null,
           lastErrorCode: null,
-          refreshMetadata: {
-            tokenType: 'facebook',
-            issuedAt: now.toISOString(),
-            lastExchangeAt: now.toISOString(),
-            graphApiVersion: 'v20.0',
-          },
+          disconnectedAt: null,
+          nextRefreshAt,
+          processingLockedUntil: null,
         },
       });
 
-      // AuditLog
+      // 5. Audit Log
       await tx.auditLog.create({
         data: {
-          action: 'SOCIAL_ACCOUNT_SELECTED',
+          action: 'SOCIAL_ACCOUNT_CONNECTED',
           entity: 'SocialConnection',
-          entityId: connectionId,
+          entityId: conn.id,
           actorId: userId,
           tenantId,
           metadata: {
             provider: 'META_INSTAGRAM',
-            pageId: selected.pageId,
-            instagramAccountId: selected.instagramAccountId,
-            instagramUsername: selected.instagramUsername,
+            pageId: input.pageId,
+            instagramId: input.instagramAccountId,
           },
         },
       });
+
+      // 6. Delete the consumed session
+      await tx.oAuthSession.delete({ where: { id: session.id } });
     });
 
-    this.logger.log(`[SelectSocialAccount] Connection established for tenant=${tenantId}`);
+    this.logger.log(`[SelectSocialAccount] Successfully connected Meta/Instagram for tenant=${tenantId}`);
   }
 }

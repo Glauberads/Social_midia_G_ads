@@ -4,6 +4,7 @@ import { RequireRoles } from '../../auth/decorators/require-roles.decorator';
 import { CurrentTenant } from '../../auth/decorators/current-tenant.decorator';
 import { TenantScope } from '../../tenants/domain/tenant.types';
 import { PrismaMembershipRepository } from '../infrastructure/prisma-membership.repository';
+import { TenantTransactionService } from '../../tenants/application/services/tenant-transaction.service';
 import { ManageMembershipUseCase } from '../application/use-cases/manage-membership.use-case';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
@@ -14,12 +15,15 @@ export class MembershipsController {
   constructor(
     private readonly membershipRepo: PrismaMembershipRepository,
     private readonly manageMembership: ManageMembershipUseCase,
+    private readonly tenantTransaction: TenantTransactionService,
   ) {}
 
   @Get()
   @RequireRoles('OWNER', 'ADMIN')
   async listMemberships(@CurrentTenant() tenant: TenantScope) {
-    const memberships = await this.membershipRepo.listByTenant(tenant);
+    const memberships = await this.tenantTransaction.execute(tenant, async (tx) => {
+      return this.membershipRepo.listByTenant(tx, tenant);
+    });
     return memberships.map((m: any) => ({
       id: m.id,
       userId: m.userId,

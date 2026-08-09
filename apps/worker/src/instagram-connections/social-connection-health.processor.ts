@@ -15,12 +15,7 @@ export class SocialConnectionHealthProcessor {
 
     const candidates = await this.prisma.$queryRaw<{ id: string; tenantId: string }[]>`
       SELECT id, "tenantId"
-      FROM public.social_connections
-      WHERE provider = 'META_INSTAGRAM'
-        AND status = 'CONNECTED'
-        AND ("nextRefreshAt" IS NULL OR "nextRefreshAt" <= now())
-        AND ("processingLockedUntil" IS NULL OR "processingLockedUntil" <= now())
-      LIMIT ${batchSize}
+      FROM public.get_social_connection_health_candidates(${batchSize})
     `;
 
     if (!candidates || candidates.length === 0) {

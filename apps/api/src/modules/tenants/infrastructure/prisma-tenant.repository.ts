@@ -1,22 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { TenantRepository } from '../application/ports/tenant.repository';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@projeto/database';
 
 @Injectable()
 export class PrismaTenantRepository implements TenantRepository {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async findBySlug(slug: string, tx?: any): Promise<any | null> {
-    const client = tx || this.prisma;
-    return await client.tenant.findUnique({
+  async findBySlug(tx: Prisma.TransactionClient, slug: string): Promise<any | null> {
+    return await tx.tenant.findUnique({
       where: { slug },
     });
   }
 
-  async create(data: { name: string; slug: string }, tx?: any): Promise<any> {
-    const client = tx || this.prisma;
+  async create(tx: Prisma.TransactionClient, data: { name: string; slug: string }): Promise<any> {
     try {
-      return await client.tenant.create({
+      return await tx.tenant.create({
         data: {
           name: data.name,
           slug: data.slug,
@@ -33,9 +29,8 @@ export class PrismaTenantRepository implements TenantRepository {
     }
   }
 
-  async findUserTenants(userId: string, tx?: any): Promise<any[]> {
-    const client = tx || this.prisma;
-    return await client.membership.findMany({
+  async findUserTenants(tx: Prisma.TransactionClient, userId: string): Promise<any[]> {
+    return await tx.membership.findMany({
       where: { userId },
       include: {
         tenant: true,

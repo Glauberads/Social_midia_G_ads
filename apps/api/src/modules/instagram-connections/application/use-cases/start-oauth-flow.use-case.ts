@@ -1,5 +1,5 @@
 import { Injectable, Logger, Inject, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import { TenantContextService } from '../../../tenants/application/tenant-context.service';
 import { SOCIAL_PROVIDER_ADAPTER, SocialProviderAdapter } from '../../domain/ports/social-provider.adapter';
 import { randomBytes, createHash } from 'crypto';
@@ -20,7 +20,7 @@ export class StartOAuthFlowUseCase {
   private readonly logger = new Logger(StartOAuthFlowUseCase.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly tenantTransaction: TenantTransactionService,
     private readonly tenantContext: TenantContextService,
     @Inject(SOCIAL_PROVIDER_ADAPTER)
     private readonly adapter: SocialProviderAdapter,
@@ -47,15 +47,17 @@ export class StartOAuthFlowUseCase {
 
     const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MINUTES * 60 * 1000);
 
-    await this.prisma.oAuthState.create({
-      data: {
-        stateHash,
-        tenantId,
-        userId,
-        provider: 'META_INSTAGRAM',
-        returnPath: resolvedReturn,
-        expiresAt,
-      },
+    await this.tenantTransaction.execute(scope, async (tx) => {
+      await tx.oAuthState.create({
+        data: {
+          stateHash,
+          tenantId,
+          userId,
+          provider: 'META_INSTAGRAM',
+          returnPath: resolvedReturn,
+          expiresAt,
+        },
+      });
     });
 
     this.logger.log(`[StartOAuthFlow] state created for tenant=${tenantId}`);

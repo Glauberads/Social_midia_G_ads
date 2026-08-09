@@ -1,14 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { MembershipRepository } from '../application/ports/membership.repository';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@projeto/database';
 
 @Injectable()
 export class PrismaMembershipRepository implements MembershipRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  async findByUserAndTenant(tx: Prisma.TransactionClient, userId: string, tenantId: string): Promise<any | null> {
+    return await tx.membership.findFirst({
+      where: { userId, tenantId },
+      include: { tenant: true },
+    });
+  }
 
-  async create(data: { userId: string; tenantId: string; role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER' }, tx?: any): Promise<any> {
-    const client = tx || this.prisma;
-    return await client.membership.create({
+  async create(tx: Prisma.TransactionClient, data: { userId: string; tenantId: string; role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER' }): Promise<any> {
+    return await tx.membership.create({
       data: {
         userId: data.userId,
         tenantId: data.tenantId,

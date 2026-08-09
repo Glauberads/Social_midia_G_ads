@@ -1,7 +1,9 @@
+import { Prisma } from '@projeto/database';
+
 export const TENANT_REPOSITORY = Symbol('TENANT_REPOSITORY');
 
 export interface TenantRepository {
-  findBySlug(slug: string, tx?: any): Promise<any | null>;
-  create(data: { name: string; slug: string }, tx?: any): Promise<any>;
-  findUserTenants(userId: string, tx?: any): Promise<any[]>;
+  findBySlug(tx: Prisma.TransactionClient, slug: string): Promise<any | null>;
+  create(tx: Prisma.TransactionClient, data: { name: string; slug: string }): Promise<any>;
+  findUserTenants(tx: Prisma.TransactionClient, userId: string): Promise<any[]>;
 }

@@ -7,9 +7,8 @@ import { Prisma } from '@projeto/database';
 export class PrismaMembershipRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listByTenant(scope: TenantScope, tx?: Prisma.TransactionClient) {
-    const client = tx || this.prisma;
-    return client.membership.findMany({
+  async listByTenant(tx: Prisma.TransactionClient, scope: TenantScope) {
+    return tx.membership.findMany({
       where: {
         tenantId: scope.tenantId,
         status: { not: 'REMOVED' },
@@ -26,9 +25,8 @@ export class PrismaMembershipRepository {
     });
   }
 
-  async findById(scope: TenantScope, membershipId: string, tx?: Prisma.TransactionClient) {
-    const client = tx || this.prisma;
-    return client.membership.findFirst({
+  async findById(tx: Prisma.TransactionClient, scope: TenantScope, membershipId: string) {
+    return tx.membership.findFirst({
       where: {
         id: membershipId,
         tenantId: scope.tenantId,
@@ -37,9 +35,10 @@ export class PrismaMembershipRepository {
     });
   }
 
-  async countActiveOwners(tenantId: string, tx?: Prisma.TransactionClient): Promise<number> {
-    const client = tx || this.prisma;
-    return client.membership.count({
+
+
+  async countActiveOwners(tx: Prisma.TransactionClient, tenantId: string): Promise<number> {
+    return tx.membership.count({
       where: {
         tenantId,
         role: 'OWNER',

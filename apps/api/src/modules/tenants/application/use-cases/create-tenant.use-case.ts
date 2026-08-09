@@ -35,7 +35,7 @@ export class CreateTenantUseCase {
       }
 
       // 2. Check if slug exists
-      const existing = await this.tenantRepository.findBySlug(dto.slug, tx);
+      const existing = await this.tenantRepository.findBySlug(tx, dto.slug);
       if (existing) {
         throw new TenantSlugAlreadyExistsException();
       }

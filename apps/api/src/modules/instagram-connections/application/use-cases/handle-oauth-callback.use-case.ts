@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import { SOCIAL_PROVIDER_ADAPTER, SocialProviderAdapter } from '../../domain/ports/social-provider.adapter';
 import { TokenEncryptionService } from '../../../core/utils/crypto.service';
 import { createHash, randomUUID } from 'crypto';
@@ -23,6 +24,7 @@ export class HandleOAuthCallbackUseCase {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly tenantTransaction: TenantTransactionService,
     @Inject(SOCIAL_PROVIDER_ADAPTER)
     private readonly adapter: SocialProviderAdapter,
     private readonly encryption: TokenEncryptionService,
@@ -32,60 +34,50 @@ export class HandleOAuthCallbackUseCase {
     // Compute stateHash from raw state — never log rawState
     const stateHash = createHash('sha256').update(rawState).digest('hex');
 
-    // Atomically consume the OAuthState and create OAuthSession in one transaction
-    const result = await this.prisma.$transaction(async (tx) => {
-      const oAuthState = await tx.oAuthState.findUnique({ where: { stateHash } });
+    // 1. Consume state via SECURITY DEFINER (global but secure context)
+    const stateRows = await this.prisma.$queryRaw<{ tenantId: string; userId: string; returnPath: string | null }[]>`
+      SELECT * FROM consume_oauth_state(${stateHash}, 'META_INSTAGRAM');
+    `;
 
-      if (!oAuthState) {
-        throw new BadRequestException('Invalid state parameter.');
-      }
-      if (oAuthState.consumedAt !== null) {
-        throw new BadRequestException('OAuth state has already been used (replay detected).');
-      }
-      if (oAuthState.expiresAt < new Date()) {
-        throw new BadRequestException('OAuth state has expired.');
-      }
-      if (oAuthState.provider !== 'META_INSTAGRAM') {
-        throw new BadRequestException('OAuth state provider mismatch.');
-      }
+    if (stateRows.length === 0) {
+      throw new BadRequestException('Invalid, consumed, expired, or mismatched OAuth state.');
+    }
 
-      // Mark state as consumed
-      await tx.oAuthState.update({
-        where: { stateHash },
-        data: { consumedAt: new Date() },
-      });
+    const oAuthState = stateRows[0];
 
-      // Exchange code for short-lived token then upgrade to long-lived
-      let shortResult: Awaited<ReturnType<SocialProviderAdapter['exchangeCode']>>;
-      try {
-        shortResult = await this.adapter.exchangeCode(code, '');
-      } catch {
-        this.logger.error('[HandleOAuthCallback] exchangeCode failed');
-        throw new BadRequestException('Failed to exchange authorization code.');
-      }
+    // 2. Network exchange (OUTSIDE of any transaction)
+    let shortResult: Awaited<ReturnType<SocialProviderAdapter['exchangeCode']>>;
+    try {
+      shortResult = await this.adapter.exchangeCode(code, '');
+    } catch {
+      this.logger.error('[HandleOAuthCallback] exchangeCode failed');
+      throw new BadRequestException('Failed to exchange authorization code.');
+    }
 
-      let longResult: Awaited<ReturnType<SocialProviderAdapter['exchangeForLongLivedToken']>>;
-      try {
-        longResult = await this.adapter.exchangeForLongLivedToken(shortResult.accessToken);
-      } catch {
-        this.logger.error('[HandleOAuthCallback] exchangeForLongLivedToken failed');
-        throw new BadRequestException('Failed to obtain long-lived token.');
-      }
+    let longResult: Awaited<ReturnType<SocialProviderAdapter['exchangeForLongLivedToken']>>;
+    try {
+      longResult = await this.adapter.exchangeForLongLivedToken(shortResult.accessToken);
+    } catch {
+      this.logger.error('[HandleOAuthCallback] exchangeForLongLivedToken failed');
+      throw new BadRequestException('Failed to obtain long-lived token.');
+    }
 
-      const sessionId = randomUUID();
-      const tokenExpiresAt = longResult.expiresIn != null
-        ? new Date(Date.now() + longResult.expiresIn * 1000)
-        : new Date(Date.now() + 5_184_000_000); // default 60 days if missing
+    // 3. Prepare session data
+    const sessionId = randomUUID();
 
-      const sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60 * 1000);
+    const sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60 * 1000);
 
-      const encrypted = this.encryption.encrypt(longResult.accessToken, {
-        kind: 'oauth-session',
-        tenantId: oAuthState.tenantId,
-        sessionId,
-        provider: 'META_INSTAGRAM',
-      });
+    const encrypted = this.encryption.encrypt(longResult.accessToken, {
+      kind: 'oauth-session',
+      tenantId: oAuthState.tenantId,
+      sessionId,
+      provider: 'META_INSTAGRAM',
+    });
 
+    // 4. Create Session within secure RLS tenant context
+    const returnPathVal = (oAuthState.returnPath ?? '/dashboard/settings/integrations') + '?result=session_ready';
+
+    await this.tenantTransaction.execute(oAuthState as any, async (tx) => {
       await tx.oAuthSession.create({
         data: {
           id: sessionId,
@@ -96,17 +88,12 @@ export class HandleOAuthCallbackUseCase {
           expiresAt: sessionExpiresAt,
         },
       });
-
-      return {
-        sessionId,
-        // The frontend detects completion via ?result=session_ready (no session identifier in URL)
-        returnPath: (oAuthState.returnPath ?? '/dashboard/settings/integrations') + '?result=session_ready',
-        tenantId: oAuthState.tenantId,
-        tokenExpiresAt,
-      };
     });
 
-    this.logger.log(`[HandleOAuthCallback] session created for tenant=${result.tenantId}`);
-    return { sessionId: result.sessionId, returnPath: result.returnPath };
+    this.logger.log(`[HandleOAuthCallback] session created for tenant=${oAuthState.tenantId}`);
+    return { 
+      sessionId, 
+      returnPath: returnPathVal 
+    };
   }
 }

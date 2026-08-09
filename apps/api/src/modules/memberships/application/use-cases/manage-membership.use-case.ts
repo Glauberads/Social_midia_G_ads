@@ -38,7 +38,7 @@ export class ManageMembershipUseCase {
     }
 
     return this.tenantTransaction.execute(scope, async (tx) => {
-      const membership = await this.membershipRepo.findById(scope, membershipId, tx);
+      const membership = await this.membershipRepo.findById(tx, scope, membershipId);
       if (!membership) throw new MembershipNotFoundException();
 
       this.validateManagementRules(scope.role as Role, membership.role, 'ROLE', newRole);
@@ -72,7 +72,7 @@ export class ManageMembershipUseCase {
     }
 
     return this.tenantTransaction.execute(scope, async (tx) => {
-      const membership = await this.membershipRepo.findById(scope, membershipId, tx);
+      const membership = await this.membershipRepo.findById(tx, scope, membershipId);
       if (!membership) throw new MembershipNotFoundException();
 
       this.validateManagementRules(scope.role as Role, membership.role, 'STATUS');
@@ -108,7 +108,7 @@ export class ManageMembershipUseCase {
     }
 
     return this.tenantTransaction.execute(scope, async (tx) => {
-      const membership = await this.membershipRepo.findById(scope, membershipId, tx);
+      const membership = await this.membershipRepo.findById(tx, scope, membershipId);
       if (!membership) throw new MembershipNotFoundException();
 
       if (scope.membershipId !== membershipId) {

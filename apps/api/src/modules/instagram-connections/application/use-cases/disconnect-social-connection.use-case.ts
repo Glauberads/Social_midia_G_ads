@@ -5,8 +5,8 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
 import { TenantContextService } from '../../../tenants/application/tenant-context.service';
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 import { SOCIAL_PROVIDER_ADAPTER, SocialProviderAdapter } from '../../domain/ports/social-provider.adapter';
 import { TokenEncryptionService } from '../../../core/utils/crypto.service';
 import { Prisma } from '@prisma/client';
@@ -17,7 +17,7 @@ export class DisconnectSocialConnectionUseCase {
   private readonly logger = new Logger(DisconnectSocialConnectionUseCase.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly tenantTransaction: TenantTransactionService,
     private readonly tenantContext: TenantContextService,
     @Inject(SOCIAL_PROVIDER_ADAPTER)
     private readonly adapter: SocialProviderAdapter,
@@ -32,39 +32,38 @@ export class DisconnectSocialConnectionUseCase {
       throw new ForbiddenException('Only OWNER or ADMIN can disconnect social accounts.');
     }
 
-    const conn = await this.prisma.socialConnection.findUnique({
-      where: { tenantId_provider: { tenantId, provider: 'META_INSTAGRAM' } },
-    });
+    await this.tenantTransaction.execute(scope, async (tx) => {
+      const conn = await tx.socialConnection.findUnique({
+        where: { tenantId_provider: { tenantId, provider: 'META_INSTAGRAM' } },
+      });
 
-    if (!conn) {
-      throw new NotFoundException('No active Meta/Instagram connection found.');
-    }
-
-    // Attempt to decrypt token for remote revocation (best-effort)
-    let plainToken: string | null = null;
-    if (conn.accessTokenEncrypted) {
-      try {
-        plainToken = this.encryption.decrypt(conn.accessTokenEncrypted, {
-          kind: 'social-token',
-          tenantId,
-          connectionId: conn.id,
-          provider: 'META_INSTAGRAM',
-        });
-      } catch {
-        this.logger.warn('[Disconnect] Could not decrypt token for revocation — continuing with local disconnect.');
+      if (!conn) {
+        throw new NotFoundException('No active Meta/Instagram connection found.');
       }
-    }
 
-    const now = new Date();
+      // Attempt to decrypt token for remote revocation (best-effort)
+      let plainToken: string | null = null;
+      if (conn.accessTokenEncrypted) {
+        try {
+          plainToken = this.encryption.decrypt(conn.accessTokenEncrypted, {
+            kind: 'social-token',
+            tenantId,
+            connectionId: conn.id,
+            provider: 'META_INSTAGRAM',
+          });
+        } catch {
+          this.logger.warn('[Disconnect] Could not decrypt token for revocation — continuing with local disconnect.');
+        }
+      }
 
-    // Local disconnect — always succeeds regardless of remote revocation
-    await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+
       await tx.socialConnection.update({
         where: { id: conn.id },
         data: {
           status: 'DISCONNECTED',
           disconnectedAt: now,
-          accessTokenEncrypted: null,   // remove local token
+          accessTokenEncrypted: null,
           tokenExpiresAt: null,
           refreshMetadata: Prisma.JsonNull,
           lastErrorCode: null,
@@ -81,16 +80,18 @@ export class DisconnectSocialConnectionUseCase {
           metadata: { provider: 'META_INSTAGRAM' },
         },
       });
+
+      // Remote revocation — best-effort, does NOT affect local state
+      if (plainToken) {
+        try {
+          await this.adapter.revoke(plainToken);
+          this.logger.log(`[Disconnect] Remote token revoked for tenant=${tenantId}`);
+        } catch {
+          this.logger.warn('[Disconnect] Remote revocation failed — local disconnect already applied.');
+        }
+      }
     });
 
     // Remote revocation — best-effort, does NOT affect local state
-    if (plainToken) {
-      try {
-        await this.adapter.revoke(plainToken);
-        this.logger.log(`[Disconnect] Remote token revoked for tenant=${tenantId}`);
-      } catch {
-        this.logger.warn('[Disconnect] Remote revocation failed — local disconnect already applied.');
-      }
-    }
   }
 }

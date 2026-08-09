@@ -12,7 +12,7 @@ export class ListUserTenantsUseCase {
 
   async execute(userId: string): Promise<TenantResponse[]> {
     return this.uow.executeGlobal(userId, async (tx) => {
-      const records = await this.tenantRepository.findUserTenants(userId, tx);
+      const records = await this.tenantRepository.findUserTenants(tx, userId);
       
       return records.map((record) => ({
         id: record.tenant.id,

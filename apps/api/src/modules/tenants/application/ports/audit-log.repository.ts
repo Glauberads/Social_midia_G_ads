@@ -1,7 +1,9 @@
+import { Prisma } from '@projeto/database';
+
 export const AUDIT_LOG_REPOSITORY = Symbol('AUDIT_LOG_REPOSITORY');
 
 export interface AuditLogRepository {
-  append(data: {
+  append(tx: Prisma.TransactionClient, data: {
     action: string;
     entity: string;
     entityId: string;
@@ -9,5 +11,5 @@ export interface AuditLogRepository {
     tenantId?: string;
     requestId?: string;
     metadata?: any;
-  }, tx?: any): Promise<void>;
+  }): Promise<void>;
 }

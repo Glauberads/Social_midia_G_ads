@@ -6,14 +6,10 @@ export class DueScheduleProcessor {
   async processBatch(batchSize = 50): Promise<number> {
     // Localize IDs in a controlled way without modifying globally
     // We use queryRaw because we want to quickly find candidate IDs.
-    // In many setups, the Prisma Client connected as service_role/postgres bypasses RLS.
-    // We only fetch candidate IDs here. The actual mutation happens inside a tenant-scoped transaction.
+    // We use the SECURITY DEFINER function to bypass RLS safely and discover candidates
     const candidates = await this.prisma.$queryRaw<{ id: string; tenantId: string }[]>`
       SELECT id, "tenantId" 
-      FROM public."ContentSchedule"
-      WHERE status = 'SCHEDULED' 
-        AND "scheduledFor" <= now()
-      LIMIT ${batchSize}
+      FROM public.get_due_content_schedules_candidates(${batchSize})
     `;
 
     if (!candidates || candidates.length === 0) {

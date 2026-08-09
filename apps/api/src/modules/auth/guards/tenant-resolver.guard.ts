@@ -60,37 +60,37 @@ export class TenantResolverGuard implements CanActivate {
       throw new BadRequestException('INVALID_TENANT_ID');
     }
 
-    // Busca tenant e membership atômica
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      include: {
-        memberships: {
-          where: { userId: user.userId },
-        },
-      },
-    }) as any; // Bypass inference issues
+    // Busca tenant e membership atômica via SECURITY DEFINER
+    const result = await this.prisma.$queryRaw<any[]>`
+      SELECT public.resolve_tenant_membership(${user.userId}::uuid, ${tenantId}::uuid) as data
+    `;
 
-    if (!tenant || tenant.deletedAt || tenant.status === 'DELETED') {
+    const data = result[0]?.data;
+
+    if (!data) {
       throw new NotFoundException('TENANT_NOT_FOUND');
     }
 
-    if (tenant.status === 'SUSPENDED') {
+    if (data.tenantStatus === 'DELETED') {
+      throw new NotFoundException('TENANT_NOT_FOUND');
+    }
+
+    if (data.tenantStatus === 'SUSPENDED') {
       throw new ForbiddenException('TENANT_SUSPENDED');
     }
 
-    if (tenant.memberships.length === 0) {
-      throw new ForbiddenException('TENANT_ACCESS_DENIED');
-    }
-
-    const membership = tenant.memberships[0];
-
-    if (membership.status === 'SUSPENDED') {
+    if (data.membershipStatus === 'SUSPENDED') {
       throw new ForbiddenException('MEMBERSHIP_SUSPENDED');
     }
 
-    if (membership.status !== 'ACTIVE') {
+    if (data.membershipStatus !== 'ACTIVE') {
       throw new ForbiddenException('TENANT_ACCESS_DENIED');
     }
+
+    const membership = {
+      id: data.membershipId,
+      role: data.role,
+    };
 
     const requestId = request.headers['x-request-id'] || randomUUID();
     request.requestId = requestId;
@@ -98,7 +98,7 @@ export class TenantResolverGuard implements CanActivate {
     // Criar TenantScope Imutável
     const scope: TenantScope = Object.freeze({
       userId: user.userId,
-      tenantId: tenant.id,
+      tenantId: tenantId,
       membershipId: membership.id,
       role: membership.role,
       requestId,

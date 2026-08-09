@@ -1,12 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { AuditLogRepository } from '../application/ports/audit-log.repository';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@projeto/database';
 
 @Injectable()
 export class PrismaAuditLogRepository implements AuditLogRepository {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async append(data: {
+  async append(tx: Prisma.TransactionClient, data: {
     action: string;
     entity: string;
     entityId: string;
@@ -14,9 +12,8 @@ export class PrismaAuditLogRepository implements AuditLogRepository {
     tenantId?: string;
     requestId?: string;
     metadata?: any;
-  }, tx?: any): Promise<void> {
-    const client = tx || this.prisma;
-    await client.auditLog.create({
+  }): Promise<void> {
+    await tx.auditLog.create({
       data: {
         action: data.action,
         entity: data.entity,

@@ -2,29 +2,24 @@ import { Injectable } from '@nestjs/common';
 import { InvitationRepository } from '../application/ports/invitation.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Invitation, Prisma } from '@prisma/client';
-import { TenantScope } from '../../tenants/domain/tenant.types';
 
 @Injectable()
 export class PrismaInvitationRepository implements InvitationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(scope: TenantScope, data: Prisma.InvitationUncheckedCreateInput): Promise<Invitation> {
-    return this.prisma.invitation.create({
-      data: {
-        ...data,
-        tenantId: scope.tenantId,
-        invitedById: scope.userId,
-      }
+  async create(tx: Prisma.TransactionClient, data: Prisma.InvitationUncheckedCreateInput): Promise<Invitation> {
+    return tx.invitation.create({
+      data: data
     });
   }
 
-  async findPendingById(scope: TenantScope, id: string): Promise<Invitation | null> {
-    return this.prisma.invitation.findUnique({
-      where: { id, tenantId: scope.tenantId, status: 'PENDING' }
+  async findPendingById(tx: Prisma.TransactionClient, id: string): Promise<Invitation | null> {
+    return tx.invitation.findUnique({
+      where: { id, status: 'PENDING' }
     });
   }
 
-  async findPendingByTokenHashForUpdate(tokenHash: string, tx: Prisma.TransactionClient): Promise<Invitation | null> {
+  async findPendingByTokenHashForUpdate(tx: Prisma.TransactionClient, tokenHash: string): Promise<Invitation | null> {
     const rows = await tx.$queryRaw<Invitation[]>`
       SELECT * FROM "Invitation"
       WHERE "tokenHash" = ${tokenHash}
@@ -33,9 +28,9 @@ export class PrismaInvitationRepository implements InvitationRepository {
     return rows.length > 0 ? rows[0] : null;
   }
 
-  async list(scope: TenantScope): Promise<Invitation[]> {
-    return this.prisma.invitation.findMany({
-      where: { tenantId: scope.tenantId },
+  async list(tx: Prisma.TransactionClient, tenantId: string): Promise<Invitation[]> {
+    return tx.invitation.findMany({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' }
     });
   }

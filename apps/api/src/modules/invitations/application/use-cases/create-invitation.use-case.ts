@@ -5,14 +5,15 @@ import { CreateInvitationDto } from '../../presentation/dto/create-invitation.dt
 import { InvitationTokenGenerator, InvitationTokenHasher } from '../../domain/invitation-crypto';
 import { EmailNormalizer } from '../../domain/email-normalizer';
 import { Role } from '@prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+
+import { TenantTransactionService } from '../../../tenants/application/services/tenant-transaction.service';
 
 @Injectable()
 export class CreateInvitationUseCase {
   constructor(
     @Inject('InvitationRepository') private readonly invitationRepo: InvitationRepository,
-    private readonly prisma: PrismaService,
+    private readonly transactionService: TenantTransactionService,
     private readonly config: ConfigService
   ) {}
 
@@ -37,35 +38,34 @@ export class CreateInvitationUseCase {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + ttlHours);
 
-    try {
-      const invitation = await this.invitationRepo.create(scope, {
-        email: normalizedEmail,
-        role: targetRole,
-        tokenHash,
-        expiresAt,
-        status: 'PENDING',
-        invitedById: scope.userId,
-        tenantId: scope.tenantId
-      });
+    return this.transactionService.execute(scope, async (tx) => {
+      try {
+        const invitation = await this.invitationRepo.create(tx, {
+          email: normalizedEmail,
+          role: targetRole,
+          tokenHash,
+          expiresAt,
+          status: 'PENDING',
+          invitedById: scope.userId,
+          tenantId: scope.tenantId
+        });
 
-      // Audit log out of transaction because create doesn't support tx yet in this repo method
-      // Wait, we can just do it in one tx or create after
-      await this.prisma.auditLog.create({
-        data: {
-          action: 'INVITATION_CREATED',
-          entity: 'Invitation',
-          entityId: invitation.id,
-          actorId: scope.userId,
-          tenantId: scope.tenantId,
-          metadata: {
-            targetEmail: normalizedEmail,
-            targetRole,
-            expiresAt
+        await tx.auditLog.create({
+          data: {
+            action: 'INVITATION_CREATED',
+            entity: 'Invitation',
+            entityId: invitation.id,
+            actorId: scope.userId,
+            tenantId: scope.tenantId,
+            metadata: {
+              targetEmail: normalizedEmail,
+              targetRole,
+              expiresAt
+            }
           }
-        }
-      });
+        });
 
-      const exposeToken = this.config.get<string>('INVITATION_EXPOSE_RAW_TOKEN') === 'true';
+        const exposeToken = this.config.get<string>('INVITATION_EXPOSE_RAW_TOKEN') === 'true';
       const isDevOrTest = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 
       const response: any = {
@@ -81,12 +81,13 @@ export class CreateInvitationUseCase {
         response.rawToken = rawToken;
       }
 
-      return response;
-    } catch (error: any) {
-      if (error.code === 'P2002') {
-        throw new ConflictException('INVITATION_ALREADY_PENDING');
+        return response;
+      } catch (error: any) {
+        if (error.code === 'P2002') {
+          throw new ConflictException('INVITATION_ALREADY_PENDING');
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 }

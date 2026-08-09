@@ -19,19 +19,19 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     await prisma.$executeRaw`
       DO $$
       BEGIN
-        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'api_user') THEN
-          CREATE ROLE api_user NOLOGIN;
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'social_elite_runtime') THEN
+          CREATE ROLE social_elite_runtime LOGIN PASSWORD 'test' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
         END IF;
       END
       $$;
     `;
-    await prisma.$executeRaw`GRANT USAGE ON SCHEMA public TO api_user`;
-    await prisma.$executeRaw`GRANT ALL ON ALL TABLES IN SCHEMA public TO api_user`;
-    await prisma.$executeRaw`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO api_user`;
-    await prisma.$executeRaw`GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO api_user`;
+    await prisma.$executeRaw`GRANT USAGE ON SCHEMA public TO social_elite_runtime`;
+    await prisma.$executeRaw`GRANT ALL ON ALL TABLES IN SCHEMA public TO social_elite_runtime`;
+    await prisma.$executeRaw`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO social_elite_runtime`;
+    await prisma.$executeRaw`GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO social_elite_runtime`;
 
     // Ensure postgres can set role
-    await prisma.$executeRaw`GRANT api_user TO postgres`;
+    await prisma.$executeRaw`GRANT social_elite_runtime TO postgres`;
 
     await prisma.$executeRaw`DELETE FROM public."ContentRevision"`;
     await prisma.$executeRaw`DELETE FROM public."GeneratedContent"`;
@@ -63,7 +63,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
   // Helpers to run queries as api_user with context
   async function asUser<T>(userId: string, tenantId: string | null, callback: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     return prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE api_user`;
+      await tx.$executeRaw`SET LOCAL ROLE social_elite_runtime`;
       await tx.$executeRaw`SET search_path = public`;
       if (userId) {
         await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true)`;
@@ -242,7 +242,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       // 1. Transaction that sets context A then rolls back
       try {
         await prisma.$transaction(async (tx) => {
-          await tx.$executeRaw`SET LOCAL ROLE api_user`;
+        await tx.$executeRaw`SET LOCAL ROLE social_elite_runtime`;
           await tx.$executeRaw`SET search_path = public`;
           await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantAId}, true)`;
           throw new Error("ROLLBACK");
@@ -251,7 +251,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
       // 2. Transaction following it should NOT have context A
       await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SET LOCAL ROLE api_user`;
+        await tx.$executeRaw`SET LOCAL ROLE social_elite_runtime`;
         await tx.$executeRaw`SET search_path = public`;
         const result = await tx.$queryRaw<{current_setting: string}[]>`SELECT current_setting('app.tenant_id', true)`;
         expect(result[0].current_setting).toBe('');
@@ -260,13 +260,13 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     it('contexto A não persiste após commit', async () => {
       await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SET LOCAL ROLE api_user`;
+        await tx.$executeRaw`SET LOCAL ROLE social_elite_runtime`;
         await tx.$executeRaw`SET search_path = public`;
         await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantAId}, true)`;
       });
 
       await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SET LOCAL ROLE api_user`;
+        await tx.$executeRaw`SET LOCAL ROLE social_elite_runtime`;
         await tx.$executeRaw`SET search_path = public`;
         const result = await tx.$queryRaw<{current_setting: string}[]>`SELECT current_setting('app.tenant_id', true)`;
         expect(result[0].current_setting).toBe('');
