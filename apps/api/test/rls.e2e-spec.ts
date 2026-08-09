@@ -6,10 +6,13 @@ import { randomBytes } from 'crypto';
 import { TenantResolverGuard } from '../src/modules/auth/guards/tenant-resolver.guard';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { SocialConnectionHealthProcessor } from '../../worker/src/instagram-connections/social-connection-health.processor';
+import { Reflector } from '@nestjs/core';
+import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
+import { TenantScoped } from '../src/modules/auth/decorators/tenant-scoped.decorator';
 
 describe('RLS Physical Tests (Direct Database Tests)', () => {
   let adminPrisma: PrismaService;
-  let runtimePrisma: PrismaClient;
+  let runtimePrisma: PrismaService;
   let e2ePassword = '';
   let e2eRole = 'social_elite_runtime';
 
@@ -69,7 +72,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     url.username = e2eRole;
     url.password = e2ePassword;
     
-    runtimePrisma = new PrismaClient({
+    runtimePrisma = new PrismaService({
       datasources: {
         db: {
           url: url.toString(),
@@ -257,22 +260,28 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
   describe('TENANT RESOLVER GUARD', () => {
     it('Gate 11: TenantResolverGuard funciona (user A + tenant A => autorizado, user A + tenant B => negado)', async () => {
-      const guard = new TenantResolverGuard(runtimePrisma as any);
+      const guard = new TenantResolverGuard(new Reflector(), runtimePrisma);
+
+      class DummyController {
+        @TenantScoped()
+        dummyHandler() {}
+      }
 
       // Mock ExecutionContext
-      const mockContext = (userId: string, tenantId: string) => ({
-        switchToHttp: () => ({
-          getRequest: () => ({
-            user: { id: userId },
-            headers: { 'x-tenant-id': tenantId }
-          })
-        })
-      }) as unknown as ExecutionContext;
+      const mockContext = (userId: string, tenantId: string) => {
+        const req = {
+          user: { userId: userId },
+          headers: { 'x-tenant-id': tenantId },
+          requestId: 'test-req',
+          tenantScope: null,
+        };
+        return new ExecutionContextHost([req], DummyController, DummyController.prototype.dummyHandler);
+      };
 
       // Gate 11.1 User A + Tenant A
-      const reqA = mockContext(userIdA, tenantAId).switchToHttp().getRequest();
-      await expect(guard.canActivate(mockContext(userIdA, tenantAId))).resolves.toBe(true);
-      expect(reqA.tenant.tenantId).toBe(tenantAId);
+      const ctxA = mockContext(userIdA, tenantAId);
+      await expect(guard.canActivate(ctxA)).resolves.toBe(true);
+      expect((ctxA.switchToHttp().getRequest() as any).tenantScope.tenantId).toBe(tenantAId);
 
       // Gate 11.2 User A + Tenant B => negado
       await expect(guard.canActivate(mockContext(userIdA, tenantBId))).rejects.toThrow(ForbiddenException);
