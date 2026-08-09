@@ -4,7 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaClient, Prisma } from '@projeto/database';
 import { randomBytes } from 'crypto';
 import { TenantResolverGuard } from '../src/modules/auth/guards/tenant-resolver.guard';
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SocialConnectionHealthProcessor } from '../../worker/src/instagram-connections/social-connection-health.processor';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
@@ -57,14 +57,14 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     // Grant execute ONLY on specific functions
     await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.resolve_tenant_membership(UUID, UUID) TO ${e2eRole}`);
-    await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.get_due_content_schedules_candidates(INT) TO ${e2eRole}`);
-    await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.get_social_connection_health_candidates(INT) TO ${e2eRole}`);
+    await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.get_due_content_schedules_candidates(BIGINT) TO ${e2eRole}`);
+    await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.get_social_connection_health_candidates(BIGINT) TO ${e2eRole}`);
     await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.consume_oauth_state(TEXT, TEXT) TO ${e2eRole}`);
 
     // Revoke from public just in case
     await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.resolve_tenant_membership(UUID, UUID) FROM PUBLIC`);
-    await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.get_due_content_schedules_candidates(INT) FROM PUBLIC`);
-    await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.get_social_connection_health_candidates(INT) FROM PUBLIC`);
+    await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.get_due_content_schedules_candidates(BIGINT) FROM PUBLIC`);
+    await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.get_social_connection_health_candidates(BIGINT) FROM PUBLIC`);
     await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.consume_oauth_state(TEXT, TEXT) FROM PUBLIC`);
 
     // Connect runtimePrisma physically as social_elite_runtime
@@ -259,40 +259,43 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
   });
 
   describe('TENANT RESOLVER GUARD', () => {
-    it('Gate 11: TenantResolverGuard funciona (user A + tenant A => autorizado, user A + tenant B => negado)', async () => {
-      const guard = new TenantResolverGuard(new Reflector(), runtimePrisma);
+    class DummyController {
+      @TenantScoped()
+      dummyHandler() {}
+    }
 
-      class DummyController {
-        @TenantScoped()
-        dummyHandler() {}
-      }
-
-      // Mock ExecutionContext
-      const mockContext = (userId: string, tenantId: string) => {
-        const req = {
-          user: { userId: userId },
-          headers: { 'x-tenant-id': tenantId },
-          requestId: 'test-req',
-          tenantScope: null,
-        };
-        return new ExecutionContextHost([req], DummyController, DummyController.prototype.dummyHandler);
+    const mockContext = (userId: string, tenantId: string) => {
+      const req = {
+        user: { userId: userId },
+        headers: { 'x-tenant-id': tenantId },
+        requestId: 'test-req',
+        tenantScope: null,
       };
+      return new ExecutionContextHost([req], DummyController, DummyController.prototype.dummyHandler);
+    };
 
-      // Gate 11.1 User A + Tenant A
+    it('Gate 11.1: User A + Tenant A => autorizado', async () => {
+      const guard = new TenantResolverGuard(new Reflector(), runtimePrisma);
       const ctxA = mockContext(userIdA, tenantAId);
       await expect(guard.canActivate(ctxA)).resolves.toBe(true);
       expect((ctxA.switchToHttp().getRequest() as any).tenantScope.tenantId).toBe(tenantAId);
+    });
 
-      // Gate 11.2 User A + Tenant B => negado
-      await expect(guard.canActivate(mockContext(userIdA, tenantBId))).rejects.toThrow(ForbiddenException);
+    it('Gate 11.2: User A + Tenant B => negado (NotFound para não enumerar)', async () => {
+      const guard = new TenantResolverGuard(new Reflector(), runtimePrisma);
+      await expect(guard.canActivate(mockContext(userIdA, tenantBId))).rejects.toThrow(NotFoundException);
+    });
 
-      // Gate 12: usuário sem membership => negado
-      const fakeUser = 'c0000000-0000-0000-0000-000000000999';
-      await expect(guard.canActivate(mockContext(fakeUser, tenantAId))).rejects.toThrow(ForbiddenException);
-
-      // Gate 11.3 tenant inválido => negado
+    it('Gate 11.3: tenant inválido/inexistente => negado (NotFound)', async () => {
+      const guard = new TenantResolverGuard(new Reflector(), runtimePrisma);
       const fakeTenant = 'a0000000-0000-0000-0000-000000000999';
-      await expect(guard.canActivate(mockContext(userIdA, fakeTenant))).rejects.toThrow(ForbiddenException);
+      await expect(guard.canActivate(mockContext(userIdA, fakeTenant))).rejects.toThrow(NotFoundException);
+    });
+
+    it('Gate 12: usuário sem membership => negado (NotFound para não enumerar)', async () => {
+      const guard = new TenantResolverGuard(new Reflector(), runtimePrisma);
+      const fakeUser = 'c0000000-0000-0000-0000-000000000999';
+      await expect(guard.canActivate(mockContext(fakeUser, tenantAId))).rejects.toThrow(NotFoundException);
     });
 
     it('Gate 13: resolve_tenant_membership não enumera tenants', async () => {
