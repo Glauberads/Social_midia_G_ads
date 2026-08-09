@@ -1,7 +1,7 @@
 FROM node:24-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+RUN npm install -g pnpm@9.0.0
 RUN apk add --no-cache libc6-compat
 
 FROM base AS builder
@@ -17,6 +17,8 @@ RUN pnpm install --frozen-lockfile
 
 COPY --from=builder /app/out/full/ .
 COPY turbo.json turbo.json
+# Keep the runner COPY deterministic even when the application has no public assets.
+RUN mkdir -p apps/web/public
 RUN pnpm turbo run build --filter=web
 
 FROM base AS runner

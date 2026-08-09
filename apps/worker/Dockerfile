@@ -1,7 +1,7 @@
 FROM node:24-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+RUN npm install -g pnpm@9.0.0
 RUN apk add --no-cache libc6-compat openssl
 
 FROM base AS builder
@@ -17,6 +17,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY --from=builder /app/out/full/ .
 COPY turbo.json turbo.json
+RUN pnpm --filter @projeto/database exec prisma generate --schema=prisma/schema.prisma
 RUN pnpm turbo run build --filter=worker...
 
 RUN pnpm prune --prod --config.ignore-scripts=true
