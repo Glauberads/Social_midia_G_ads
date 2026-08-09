@@ -19,6 +19,7 @@ interface WorkspaceContextValue {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const DEFAULT_TENANT_ID = process.env.NEXT_PUBLIC_DEFAULT_TENANT_ID || '';
 
 export function useWorkspace() {
   const context = useContext(WorkspaceContext);
@@ -39,11 +40,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const refreshWorkspaces = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     if (!data.session) return;
-    const response = await fetch(`${API_URL}/tenants`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+    const saved = localStorage.getItem('glauberads_preferred_tenant');
+    const candidateTenantId = saved || DEFAULT_TENANT_ID;
+    if (!candidateTenantId) return;
+    const response = await fetch(`${API_URL}/tenants`, { headers: {
+      Authorization: `Bearer ${data.session.access_token}`,
+      'x-tenant-id': candidateTenantId,
+    } });
     if (!response.ok) return;
     const list: WorkspaceOption[] = await response.json();
     setWorkspaces(list);
-    const saved = localStorage.getItem('glauberads_preferred_tenant');
     setActiveWorkspaceState((current) => {
       const candidate = current || saved;
       return candidate && list.some((workspace) => workspace.id === candidate) ? candidate : list[0]?.id || null;

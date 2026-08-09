@@ -24,7 +24,7 @@ describe('ListUserTenantsUseCase', () => {
     };
 
     const mockUow = {
-      executeGlobal: jest.fn().mockImplementation((userId, cb) => cb({}))
+      executeWithTenant: jest.fn().mockImplementation((tenantId, userId, cb) => cb({}))
     };
 
     useCase = new ListUserTenantsUseCase(
@@ -34,7 +34,7 @@ describe('ListUserTenantsUseCase', () => {
   });
 
   it('deve listar apenas os tenants em que o usuario possui membership', async () => {
-    const result = await useCase.execute('user-123');
+    const result = await useCase.execute('user-123', 'tenant-123');
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('tenant-123');
     expect(result[0].membership.role).toBe('OWNER');

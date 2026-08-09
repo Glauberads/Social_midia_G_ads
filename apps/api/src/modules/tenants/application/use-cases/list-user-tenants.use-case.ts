@@ -10,8 +10,8 @@ export class ListUserTenantsUseCase {
     @Inject(UNIT_OF_WORK) private readonly uow: UnitOfWork,
   ) {}
 
-  async execute(userId: string): Promise<TenantResponse[]> {
-    return this.uow.executeGlobal(userId, async (tx) => {
+  async execute(userId: string, tenantId: string): Promise<TenantResponse[]> {
+    return this.uow.executeWithTenant(tenantId, userId, async (tx) => {
       const records = await this.tenantRepository.findUserTenants(tx, userId);
       
       return records.map((record) => ({

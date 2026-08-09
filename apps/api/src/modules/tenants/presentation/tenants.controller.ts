@@ -5,6 +5,9 @@ import { CreateTenantUseCase } from '../application/use-cases/create-tenant.use-
 import { ListUserTenantsUseCase } from '../application/use-cases/list-user-tenants.use-case';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AuthenticatedIdentity } from '../../auth/services/access-token-verifier.interface';
+import { TenantScoped } from '../../auth/decorators/tenant-scoped.decorator';
+import { CurrentTenant } from '../../auth/decorators/current-tenant.decorator';
+import { TenantScope } from '../domain/tenant.types';
 
 @Controller('tenants')
 export class TenantsController {
@@ -24,7 +27,11 @@ export class TenantsController {
   }
 
   @Get()
-  async findAll(@CurrentUser() user: AuthenticatedIdentity) {
-    return await this.listUserTenantsUseCase.execute(user.userId);
+  @TenantScoped()
+  async findAll(
+    @CurrentUser() user: AuthenticatedIdentity,
+    @CurrentTenant() tenant: TenantScope,
+  ) {
+    return await this.listUserTenantsUseCase.execute(user.userId, tenant.tenantId);
   }
 }
