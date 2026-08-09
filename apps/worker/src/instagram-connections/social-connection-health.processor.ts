@@ -67,9 +67,11 @@ export class SocialConnectionHealthProcessor {
 
         // 2. FASE DE NETWORK (Fora da transaction)
         if (isEligibleForRefresh) {
-          await this.handleRefresh(candidate.tenantId, snapshot, accessToken, lockToken);
+          const refreshData = await this.handleRefresh(accessToken);
+          await this.persistRefreshSuccess(candidate.tenantId, snapshot, lockToken, refreshData);
         } else {
-          await this.handleValidate(candidate.tenantId, snapshot, accessToken, lockToken);
+          await this.handleValidate(accessToken);
+          await this.persistValidateSuccess(candidate.tenantId, snapshot, lockToken);
         }
         processedCount++;
       } catch (err) {
@@ -80,7 +82,7 @@ export class SocialConnectionHealthProcessor {
         }));
         if (snapshot) {
           // Tentar persistir a falha em nova transação curta
-          await this.handleError(candidate.tenantId, snapshot, lockToken, err);
+          await this.persistFailure(candidate.tenantId, snapshot, lockToken, err);
           processedCount++; // Tentado e falhado
         }
       }
@@ -101,7 +103,7 @@ export class SocialConnectionHealthProcessor {
     });
   }
 
-  private async handleValidate(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string, lockToken: string) {
+  private async handleValidate(accessToken: string): Promise<void> {
     const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/me?fields=id,name&access_token=${accessToken}`);
 
     if (!res.ok) {
@@ -112,7 +114,9 @@ export class SocialConnectionHealthProcessor {
         graphErrorSubcode: body?.error?.error_subcode,
       });
     }
+  }
 
+  private async persistValidateSuccess(tenantId: string, conn: { id: string }, lockToken: string) {
     await this.inTenantTransaction(tenantId, async (tx) => {
       await tx.$executeRaw`
         UPDATE public.social_connections
@@ -129,18 +133,7 @@ export class SocialConnectionHealthProcessor {
     });
   }
 
-  private async handleRefresh(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string, lockToken: string) {
-    const now = new Date();
-    // Update last refresh attempt (Ownership-safe)
-    await this.inTenantTransaction(tenantId, async (tx) => {
-      await tx.$executeRaw`
-        UPDATE public.social_connections
-        SET "lastRefreshAttemptAt" = ${now}::timestamp
-        WHERE id = ${conn.id}::uuid
-          AND "processingLockToken" = ${lockToken}::uuid
-      `;
-    });
-
+  private async handleRefresh(accessToken: string): Promise<{ access_token: string; expires_in?: number }> {
     const params = new URLSearchParams({
       grant_type: 'fb_exchange_token',
       client_id: this.config.META_APP_ID!,
@@ -159,21 +152,23 @@ export class SocialConnectionHealthProcessor {
       });
     }
 
-    const data = await res.json();
+    return await res.json();
+  }
 
+  private async persistRefreshSuccess(tenantId: string, conn: { id: string }, lockToken: string, data: { access_token: string; expires_in?: number }) {
+    const now = new Date();
     const newEncryptedToken = this.encryptToken(data.access_token);
     const tokenExpiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
-    const nextRefreshAt = this.calculateNextRefreshAt(data.expires_in);
+    const nextRefreshAt = this.calculateNextRefreshAt(data.expires_in ?? null);
 
     await this.inTenantTransaction(tenantId, async (tx) => {
-      // Prisma update with standard method where possible, but we need raw for ownership token checking easily
-      // Because we must ensure processingLockToken matches
       await tx.$executeRaw`
         UPDATE public.social_connections
         SET "accessTokenEncrypted" = ${newEncryptedToken},
             "tokenExpiresAt" = ${tokenExpiresAt}::timestamp,
             "nextRefreshAt" = ${nextRefreshAt}::timestamp,
             "lastRefreshSuccessAt" = ${now}::timestamp,
+            "lastRefreshAttemptAt" = ${now}::timestamp,
             "refreshFailureCount" = 0,
             "lastErrorAt" = NULL,
             "lastErrorCategory" = NULL,
@@ -186,7 +181,7 @@ export class SocialConnectionHealthProcessor {
     });
   }
 
-  private async handleError(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, lockToken: string, err: unknown) {
+  private async persistFailure(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, lockToken: string, err: unknown) {
     const classification = this.classifyMetaError(err);
     const failureCount = conn.refreshFailureCount + 1;
     const now = new Date();
