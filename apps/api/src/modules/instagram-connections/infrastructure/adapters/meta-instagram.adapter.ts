@@ -6,6 +6,8 @@ import {
   InstagramAccount,
   SocialProviderAdapter,
 } from '../../domain/ports/social-provider.adapter';
+import { MetaIntegrationAvailabilityService } from '../services/meta-integration-availability.service';
+import { MetaIntegrationNotConfiguredException } from '../../domain/errors/meta-integration-not-configured.exception';
 
 // ─── Zod schemas for Graph API response validation ───────────────────────────
 
@@ -51,26 +53,42 @@ function isTransient(status: number): boolean {
 @Injectable()
 export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit {
   private readonly logger = new Logger(MetaInstagramAdapter.name);
-  private appId!: string;
-  private appSecret!: string;
-  private redirectUri!: string;
-  private apiVersion!: string;
   private readonly maxRetries = 3;
   private readonly timeoutMs = 15_000;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly availabilityService: MetaIntegrationAvailabilityService,
+  ) {}
 
   onModuleInit(): void {
-    this.appId = this.configService.getOrThrow<string>('META_APP_ID');
-    this.appSecret = this.configService.getOrThrow<string>('META_APP_SECRET');
-    this.redirectUri = this.configService.getOrThrow<string>('META_REDIRECT_URI');
-    this.apiVersion = this.configService.getOrThrow<string>('META_GRAPH_API_VERSION');
-
-    if (!/^v\d+\.\d+$/.test(this.apiVersion)) {
-      throw new Error(`[MetaInstagramAdapter] META_GRAPH_API_VERSION is invalid: ${this.apiVersion}`);
+    if (this.availabilityService.isConfigured()) {
+      this.logger.log(`MetaInstagramAdapter initialized. Graph API ${this.apiVersion}`);
+    } else {
+      this.logger.log('MetaInstagramAdapter initialized (Integration NOT configured)');
     }
+  }
 
-    this.logger.log(`MetaInstagramAdapter initialized. Graph API ${this.apiVersion}`);
+  private ensureConfigured(): void {
+    if (!this.availabilityService.isConfigured()) {
+      throw new MetaIntegrationNotConfiguredException();
+    }
+  }
+
+  private get appId(): string {
+    return this.configService.get<string>('META_APP_ID') ?? '';
+  }
+
+  private get appSecret(): string {
+    return this.configService.get<string>('META_APP_SECRET') ?? '';
+  }
+
+  private get redirectUri(): string {
+    return this.configService.get<string>('META_REDIRECT_URI') ?? '';
+  }
+
+  private get apiVersion(): string {
+    return this.configService.get<string>('META_GRAPH_API_VERSION') ?? '';
   }
 
   private get baseUrl(): string {
@@ -78,6 +96,7 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
   }
 
   buildAuthorizationUrl(state: string, _redirectUri: string, scopes: string[]): string {
+    this.ensureConfigured();
     // redirect_uri is always taken from server config — not from caller
     const params = new URLSearchParams({
       client_id: this.appId,
@@ -91,6 +110,7 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async exchangeCode(code: string, _redirectUri: string): Promise<ExchangeCodeResult> {
+    this.ensureConfigured();
     const params = new URLSearchParams({
       client_id: this.appId,
       client_secret: this.appSecret,
@@ -110,6 +130,7 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
   }
 
   async exchangeForLongLivedToken(accessToken: string): Promise<ExchangeCodeResult> {
+    this.ensureConfigured();
     const params = new URLSearchParams({
       grant_type: 'fb_exchange_token',
       client_id: this.appId,
@@ -129,6 +150,7 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
   }
 
   async listAvailableAccounts(accessToken: string): Promise<InstagramAccount[]> {
+    this.ensureConfigured();
     const params = new URLSearchParams({
       fields: 'id,name,access_token,instagram_business_account',
       access_token: accessToken,
@@ -172,6 +194,7 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
   }
 
   async validateConnection(accessToken: string): Promise<{ userId: string }> {
+    this.ensureConfigured();
     const params = new URLSearchParams({
       fields: 'id,name',
       access_token: accessToken,
@@ -185,6 +208,7 @@ export class MetaInstagramAdapter implements SocialProviderAdapter, OnModuleInit
   }
 
   async revoke(accessToken: string): Promise<void> {
+    this.ensureConfigured();
     const params = new URLSearchParams({ access_token: accessToken });
     // best effort — do not throw if revocation fails
     try {

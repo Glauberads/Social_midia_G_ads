@@ -11,7 +11,7 @@ Serviços locais (Docker):
 
 ## Pré-requisitos
 - SSH Access à VPS via alias `glauber-staging` (a definir).
-- `.env.staging` populado (use `.env.staging.example` como base).
+- `.env.staging` populado (use `.env.staging.example` como base). Nota: Integração Meta é opcional para o boot, mas obrigatória para funcionalidades do Instagram. O callback deve apontar para `https://api-staging.glauberads.com.br/api/integrations/meta/callback` ou equivalente configurado no Meta App.
 - Repositório atualizado na máquina host.
 
 ## Procedimento de Deploy

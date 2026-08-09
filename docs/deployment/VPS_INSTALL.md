@@ -21,6 +21,8 @@ Não presuma o nome da rede externa ou do resolver TLS. Preencha adequadamente:
 
 > [!WARNING]
 > NUNCA faça o upload do arquivo `.env.staging` para o GitHub. Insira-o diretamente no servidor via SSH ou use um cofre de chaves (Secret Manager).
+>
+> **Nota sobre o Meta/Instagram:** As variáveis `META_*` são opcionais para o boot da aplicação. O deploy ocorrerá com sucesso e os healthchecks serão positivos. Porém, para utilizar as funcionalidades do Instagram, certifique-se de preenchê-las (incluindo `META_REDIRECT_URI` apontando para o callback real configurado no App do Facebook, ex: `https://api-staging.glauberads.com.br/api/integrations/meta/callback`).
 
 ## 3. Registro e Auditoria Pré e Pós-Deploy
 Antes e depois de realizar qualquer deploy, registre as seguintes informações em seu sistema de controle ou logs de homologação:

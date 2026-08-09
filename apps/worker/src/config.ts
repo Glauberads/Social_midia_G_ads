@@ -9,9 +9,9 @@ const schema = z.object({
   AI_PROVIDER: z.enum(['fake', 'openai-compatible']).default('fake'),
   AI_API_KEY: z.string().optional(),
   ENCRYPTION_KEY: z.string().length(64, 'ENCRYPTION_KEY must be a 64-character hex string'),
-  META_APP_ID: z.string().min(1),
-  META_APP_SECRET: z.string().min(1),
-  META_GRAPH_API_VERSION: z.string().min(1),
+  META_APP_ID: z.string().min(1).optional(),
+  META_APP_SECRET: z.string().min(1).optional(),
+  META_GRAPH_API_VERSION: z.string().min(1).optional(),
   AI_MODEL: z.string().min(1).default('fake-v1'),
   AI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
@@ -25,4 +25,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   const result = schema.safeParse(env);
   if (!result.success) throw new Error(`Invalid worker configuration: ${result.error.issues.map((i) => i.path.join('.')).join(', ')}`);
   return result.data;
+}
+
+export function isMetaConfigured(config: WorkerConfig): boolean {
+  const isValid = (val: string | undefined): boolean => {
+    if (!val) return false;
+    const t = val.trim();
+    return (
+      t !== '' &&
+      t !== 'CHANGE_ME' &&
+      t !== 'your_staging_meta_app_id' &&
+      t !== 'your_staging_meta_app_secret' &&
+      !t.startsWith('seu_')
+    );
+  };
+  return isValid(config.META_APP_ID) && isValid(config.META_APP_SECRET) && isValid(config.META_GRAPH_API_VERSION);
 }

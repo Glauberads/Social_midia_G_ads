@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma, SocialConnectionStatus, SocialConnectionErrorCategory } from '@projeto/database';
-import { loadConfig } from '../config';
+import { loadConfig, isMetaConfigured } from '../config';
 import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 
 export class SocialConnectionHealthProcessor {
@@ -8,6 +8,11 @@ export class SocialConnectionHealthProcessor {
   constructor(private readonly prisma: PrismaClient) {}
 
   async processBatch(batchSize = 50): Promise<number> {
+    if (!isMetaConfigured(this.config)) {
+      // Integration is not configured, we shouldn't attempt to process Meta jobs
+      return 0;
+    }
+
     const candidates = await this.prisma.$queryRaw<{ id: string; tenantId: string }[]>`
       SELECT id, "tenantId"
       FROM public.social_connections
@@ -81,7 +86,7 @@ export class SocialConnectionHealthProcessor {
 
   private async handleValidate(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string) {
     try {
-      const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION}/me?fields=id,name&access_token=${accessToken}`);
+      const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/me?fields=id,name&access_token=${accessToken}`);
       
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -117,12 +122,12 @@ export class SocialConnectionHealthProcessor {
 
       const params = new URLSearchParams({
         grant_type: 'fb_exchange_token',
-        client_id: this.config.META_APP_ID,
-        client_secret: this.config.META_APP_SECRET,
+        client_id: this.config.META_APP_ID!,
+        client_secret: this.config.META_APP_SECRET!,
         fb_exchange_token: accessToken,
       });
 
-      const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION}/oauth/access_token?${params}`);
+      const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/oauth/access_token?${params}`);
       
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

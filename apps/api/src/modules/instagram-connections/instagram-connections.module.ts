@@ -11,6 +11,7 @@ import { GetSocialConnectionHealthUseCase } from './application/use-cases/get-so
 import { ValidateSocialConnectionUseCase } from './application/use-cases/validate-social-connection.use-case';
 import { RefreshSocialConnectionUseCase } from './application/use-cases/refresh-social-connection.use-case';
 import { FakeSocialProviderAdapter } from './infrastructure/adapters/fake-social.adapter';
+import { MetaIntegrationAvailabilityService } from './infrastructure/services/meta-integration-availability.service';
 import { MetaInstagramAdapter } from './infrastructure/adapters/meta-instagram.adapter';
 import { SOCIAL_PROVIDER_ADAPTER } from './domain/ports/social-provider.adapter';
 import { TenantsModule } from '../tenants/tenants.module';
@@ -30,11 +31,11 @@ import { TenantsModule } from '../tenants/tenants.module';
     RefreshSocialConnectionUseCase,
     FakeSocialProviderAdapter,
     MetaInstagramAdapter,
+    MetaIntegrationAvailabilityService,
     {
       provide: SOCIAL_PROVIDER_ADAPTER,
       useFactory: (config: ConfigService, fake: FakeSocialProviderAdapter, meta: MetaInstagramAdapter) => {
-        const provider = config.get<string>('SOCIAL_PROVIDER', 'fake');
-        return provider === 'meta' ? meta : fake;
+        return config.get('NODE_ENV') === 'test' ? fake : meta;
       },
       inject: [ConfigService, FakeSocialProviderAdapter, MetaInstagramAdapter],
     },

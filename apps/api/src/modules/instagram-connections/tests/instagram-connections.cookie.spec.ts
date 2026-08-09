@@ -29,6 +29,7 @@ import { DisconnectSocialConnectionUseCase } from '../application/use-cases/disc
 import { GetSocialConnectionHealthUseCase } from '../application/use-cases/get-social-connection-health.use-case';
 import { ValidateSocialConnectionUseCase } from '../application/use-cases/validate-social-connection.use-case';
 import { RefreshSocialConnectionUseCase } from '../application/use-cases/refresh-social-connection.use-case';
+import { MetaIntegrationAvailabilityService } from '../infrastructure/services/meta-integration-availability.service';
 
 // ─── Mock Use Cases ───────────────────────────────────────────────────────────
 
@@ -41,8 +42,9 @@ const mockStartOAuth = { execute: jest.fn() };
 const mockGetStatus = { execute: jest.fn() };
 const mockDisconnect = { execute: jest.fn() };
 const mockGetHealth = { execute: jest.fn() };
-const mockValidate = { execute: jest.fn() };
-const mockRefresh = { execute: jest.fn() };
+const mockValidateConn = { execute: jest.fn() };
+const mockRefreshConn = { execute: jest.fn() };
+const mockMetaAvailability = { isConfigured: jest.fn().mockReturnValue(true) };
 
 async function buildApp(nodeEnv = 'test'): Promise<INestApplication> {
   process.env.NODE_ENV = nodeEnv;
@@ -57,8 +59,9 @@ async function buildApp(nodeEnv = 'test'): Promise<INestApplication> {
       { provide: GetSocialConnectionStatusUseCase, useValue: mockGetStatus },
       { provide: DisconnectSocialConnectionUseCase, useValue: mockDisconnect },
       { provide: GetSocialConnectionHealthUseCase, useValue: mockGetHealth },
-      { provide: ValidateSocialConnectionUseCase, useValue: mockValidate },
-      { provide: RefreshSocialConnectionUseCase, useValue: mockRefresh },
+      { provide: ValidateSocialConnectionUseCase, useValue: mockValidateConn },
+      { provide: RefreshSocialConnectionUseCase, useValue: mockRefreshConn },
+      { provide: MetaIntegrationAvailabilityService, useValue: mockMetaAvailability },
     ],
   }).compile();
 

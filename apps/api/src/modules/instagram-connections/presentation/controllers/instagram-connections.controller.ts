@@ -16,6 +16,7 @@ import { StartOAuthFlowUseCase } from '../../application/use-cases/start-oauth-f
 import { HandleOAuthCallbackUseCase } from '../../application/use-cases/handle-oauth-callback.use-case';
 import { ListAvailableAccountsUseCase } from '../../application/use-cases/list-available-accounts.use-case';
 import { SelectSocialAccountUseCase } from '../../application/use-cases/select-social-account.use-case';
+import { MetaIntegrationAvailabilityService } from '../../infrastructure/services/meta-integration-availability.service';
 import { GetSocialConnectionStatusUseCase } from '../../application/use-cases/get-social-connection-status.use-case';
 import { DisconnectSocialConnectionUseCase } from '../../application/use-cases/disconnect-social-connection.use-case';
 import { GetSocialConnectionHealthUseCase } from '../../application/use-cases/get-social-connection-health.use-case';
@@ -45,6 +46,7 @@ export class InstagramConnectionsController {
     private readonly getHealth: GetSocialConnectionHealthUseCase,
     private readonly validateConn: ValidateSocialConnectionUseCase,
     private readonly refreshConn: RefreshSocialConnectionUseCase,
+    private readonly metaAvailability: MetaIntegrationAvailabilityService,
   ) {}
 
   /** Step 1: Start OAuth flow — returns the Meta authorization URL */
@@ -159,9 +161,13 @@ export class InstagramConnectionsController {
   @Get('status')
   @TenantScoped()
   async status() {
+    if (!this.metaAvailability.isConfigured()) {
+      return { configured: false, connected: false, status: 'not_configured' };
+    }
     const result = await this.getStatus.execute();
-    if (!result) return { connected: false };
+    if (!result) return { configured: true, connected: false };
     return {
+      configured: true,
       connected: result.status === 'CONNECTED',
       status: result.status,
       provider: result.provider,
@@ -176,9 +182,13 @@ export class InstagramConnectionsController {
   @Get('health')
   @TenantScoped()
   async health() {
+    if (!this.metaAvailability.isConfigured()) {
+      return { configured: false, connected: false, status: 'not_configured' };
+    }
     const result = await this.getHealth.execute();
-    if (!result) return { connected: false };
+    if (!result) return { configured: true, connected: false };
     return {
+      configured: true,
       connected: result.status === 'CONNECTED',
       ...result,
     };
