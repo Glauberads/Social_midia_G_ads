@@ -25,4 +25,4 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 migration
 
 USER migration
-CMD ["npx", "prisma", "migrate", "deploy", "--schema=packages/database/prisma/schema.prisma"]
+CMD ["pnpm", "exec", "prisma", "migrate", "deploy", "--schema=packages/database/prisma/schema.prisma"]
