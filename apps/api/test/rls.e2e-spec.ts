@@ -358,7 +358,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     
     beforeAll(async () => {
       // Create with accessTokenEncrypted to pass early return
-      await adminPrisma.$executeRaw`INSERT INTO public.social_connections ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt", "nextRefreshAt", "accessTokenEncrypted") VALUES (${connA}::uuid, ${tenantAId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdA}::uuid, NOW(), NOW(), NOW() - interval '1 day', 'enc')`;
+      await adminPrisma.$executeRaw`INSERT INTO public.social_connections ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt", "nextRefreshAt", "accessTokenEncrypted") VALUES (${connA}::uuid, ${tenantAId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdA}::uuid, NOW(), NOW(), NULL, 'enc')`;
     });
 
     it('Gate 19: social_connections respeitam RLS', async () => {
@@ -389,7 +389,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     it('Gate 24: concorrência worker não duplica processamento', async () => {
       // Isolar o teste restaurando o candidate para um estado processável e aguardando processamento
-      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NOW() - interval '1 day', "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
 
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
@@ -416,7 +416,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     it('Gate 25: retry/falha não vaza contexto', async () => {
       // Isolar o teste restaurando o candidate para um estado processável e aguardando processamento
-      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NOW() - interval '1 day', "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
 
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');

@@ -26,7 +26,7 @@ export class SocialConnectionHealthProcessor {
 
     for (const candidate of candidates) {
       try {
-        await this.inTenantTransaction(candidate.tenantId, async (tx) => {
+        const processed = await this.inTenantTransaction(candidate.tenantId, async (tx) => {
           // Lock processing inside RLS context
           const locked = await tx.$executeRaw`
             UPDATE public.social_connections
@@ -35,7 +35,7 @@ export class SocialConnectionHealthProcessor {
               AND ("processingLockedUntil" IS NULL OR "processingLockedUntil" <= now())
           `;
 
-          if (locked === 0) return; // locked by another worker
+          if (locked === 0) return false; // locked by another worker
 
           try {
             const conn = await tx.socialConnection.findUnique({
@@ -43,7 +43,7 @@ export class SocialConnectionHealthProcessor {
             });
 
             if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEncrypted) {
-              return;
+              return true;
             }
 
             const accessToken = this.decryptToken(conn.accessTokenEncrypted);
@@ -65,9 +65,12 @@ export class SocialConnectionHealthProcessor {
               WHERE id = ${candidate.id}::uuid
             `;
           }
+          return true;
         });
 
-        processedCount++;
+        if (processed) {
+          processedCount++;
+        }
       } catch (err) {
         console.error(JSON.stringify({
           event: 'social_connection_processing_failed',
