@@ -391,6 +391,7 @@ model SocialConnection {
   nextRefreshAt         DateTime?
   refreshFailureCount   Int                            @default(0)
   processingLockedUntil DateTime?
+  processingLockToken   String?                        @db.Uuid
   lastErrorAt           DateTime?
   lastErrorCategory     SocialConnectionErrorCategory?
 

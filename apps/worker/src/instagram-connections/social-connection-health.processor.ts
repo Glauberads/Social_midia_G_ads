@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma, SocialConnectionStatus, SocialConnectionErrorCategory } from '@projeto/database';
+import crypto from 'crypto';
 import { loadConfig, isMetaConfigured } from '../config';
 import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 
@@ -25,144 +26,167 @@ export class SocialConnectionHealthProcessor {
     let processedCount = 0;
 
     for (const candidate of candidates) {
+      const lockToken = crypto.randomUUID();
+      let snapshot: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null; nextRefreshAt: Date | null } | null = null;
+
       try {
-        const processed = await this.inTenantTransaction(candidate.tenantId, async (tx) => {
-          // Lock processing inside RLS context
+        // 1. FASE DE CLAIM
+        const claimResult = await this.inTenantTransaction(candidate.tenantId, async (tx) => {
           const locked = await tx.$executeRaw`
             UPDATE public.social_connections
-            SET "processingLockedUntil" = now() + interval '5 minutes'
+            SET "processingLockedUntil" = now() + interval '5 minutes',
+                "processingLockToken" = ${lockToken}::uuid
             WHERE id = ${candidate.id}::uuid
               AND ("processingLockedUntil" IS NULL OR "processingLockedUntil" <= now())
           `;
 
-          if (locked === 0) return false; // locked by another worker
+          if (locked === 0) return null; // locked by another worker
 
-          try {
-            const conn = await tx.socialConnection.findUnique({
-              where: { id: candidate.id },
-            });
-
-            if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEncrypted) {
-              return true;
-            }
-
-            const accessToken = this.decryptToken(conn.accessTokenEncrypted);
-            
-            // Determine if we are doing a refresh or just validation
-            // We do refresh if tokenExpiresAt is present and we are within the margin
-            const isEligibleForRefresh = conn.nextRefreshAt && conn.nextRefreshAt <= new Date();
-
-            if (isEligibleForRefresh) {
-              await this.handleRefresh(tx, conn, accessToken);
-            } else {
-              await this.handleValidate(tx, conn, accessToken);
-            }
-          } finally {
-            // Release processing lock inside RLS context
-            await tx.$executeRaw`
-              UPDATE public.social_connections
-              SET "processingLockedUntil" = NULL
-              WHERE id = ${candidate.id}::uuid
-            `;
-          }
-          return true;
+          const conn = await tx.socialConnection.findUnique({
+            where: { id: candidate.id },
+            select: { id: true, status: true, refreshFailureCount: true, accessTokenEncrypted: true, tokenExpiresAt: true, nextRefreshAt: true }
+          });
+          return conn;
         });
 
-        if (processed) {
-          processedCount++;
+        if (!claimResult) {
+          continue; // Claim perdido
         }
+
+        snapshot = claimResult;
+
+        if (!snapshot.accessTokenEncrypted || snapshot.status !== 'CONNECTED') {
+          // Precisamos liberar o lock já que não vamos processar
+          await this.releaseLock(candidate.tenantId, snapshot.id, lockToken);
+          processedCount++;
+          continue;
+        }
+
+        const accessToken = this.decryptToken(snapshot.accessTokenEncrypted);
+        const isEligibleForRefresh = snapshot.nextRefreshAt && snapshot.nextRefreshAt <= new Date();
+
+        // 2. FASE DE NETWORK (Fora da transaction)
+        if (isEligibleForRefresh) {
+          await this.handleRefresh(candidate.tenantId, snapshot, accessToken, lockToken);
+        } else {
+          await this.handleValidate(candidate.tenantId, snapshot, accessToken, lockToken);
+        }
+        processedCount++;
       } catch (err) {
         console.error(JSON.stringify({
           event: 'social_connection_processing_failed',
           connectionId: candidate.id,
-          error: err instanceof Error ? err.message : String(err),
+          error: err instanceof Error ? err.message : String(err)
         }));
+        if (snapshot) {
+          // Tentar persistir a falha em nova transação curta
+          await this.handleError(candidate.tenantId, snapshot, lockToken, err);
+          processedCount++; // Tentado e falhado
+        }
       }
     }
 
     return processedCount;
   }
 
-  private async handleValidate(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string) {
-    try {
-      const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/me?fields=id,name&access_token=${accessToken}`);
-      
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw Object.assign(new Error(`Validation failed: ${res.status}`), {
-          status: res.status,
-          graphErrorCode: body?.error?.code,
-          graphErrorSubcode: body?.error?.error_subcode,
-        });
-      }
-
-      await tx.socialConnection.update({
-        where: { id: conn.id },
-        data: {
-          lastValidatedAt: new Date(),
-          refreshFailureCount: 0,
-          lastErrorAt: null,
-          lastErrorCategory: null,
-          lastErrorCode: null,
-        },
-      });
-    } catch (err) {
-      await this.handleError(tx, conn, err);
-    }
+  private async releaseLock(tenantId: string, connectionId: string, lockToken: string) {
+    await this.inTenantTransaction(tenantId, async (tx) => {
+      await tx.$executeRaw`
+        UPDATE public.social_connections
+        SET "processingLockedUntil" = NULL,
+            "processingLockToken" = NULL
+        WHERE id = ${connectionId}::uuid
+          AND "processingLockToken" = ${lockToken}::uuid
+      `;
+    });
   }
 
-  private async handleRefresh(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string) {
-    try {
-      const now = new Date();
-      await tx.socialConnection.update({
-        where: { id: conn.id },
-        data: { lastRefreshAttemptAt: now },
+  private async handleValidate(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string, lockToken: string) {
+    const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/me?fields=id,name&access_token=${accessToken}`);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(`Validation failed: ${res.status}`), {
+        status: res.status,
+        graphErrorCode: body?.error?.code,
+        graphErrorSubcode: body?.error?.error_subcode,
       });
-
-      const params = new URLSearchParams({
-        grant_type: 'fb_exchange_token',
-        client_id: this.config.META_APP_ID!,
-        client_secret: this.config.META_APP_SECRET!,
-        fb_exchange_token: accessToken,
-      });
-
-      const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/oauth/access_token?${params}`);
-      
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw Object.assign(new Error(`Refresh failed: ${res.status}`), {
-          status: res.status,
-          graphErrorCode: body?.error?.code,
-          graphErrorSubcode: body?.error?.error_subcode,
-        });
-      }
-
-      const data = await res.json();
-      
-      const newEncryptedToken = this.encryptToken(data.access_token);
-      const tokenExpiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
-      const nextRefreshAt = this.calculateNextRefreshAt(data.expires_in);
-
-      await tx.socialConnection.update({
-        where: { id: conn.id },
-        data: {
-          accessTokenEncrypted: newEncryptedToken,
-          tokenExpiresAt: tokenExpiresAt,
-          nextRefreshAt: nextRefreshAt,
-          lastRefreshSuccessAt: now,
-          refreshFailureCount: 0,
-          lastErrorAt: null,
-          lastErrorCategory: null,
-          lastErrorCode: null,
-        },
-      });
-
-    } catch (err) {
-      await this.handleError(tx, conn, err);
     }
+
+    await this.inTenantTransaction(tenantId, async (tx) => {
+      await tx.$executeRaw`
+        UPDATE public.social_connections
+        SET "lastValidatedAt" = NOW(),
+            "refreshFailureCount" = 0,
+            "lastErrorAt" = NULL,
+            "lastErrorCategory" = NULL,
+            "lastErrorCode" = NULL,
+            "processingLockedUntil" = NULL,
+            "processingLockToken" = NULL
+        WHERE id = ${conn.id}::uuid
+          AND "processingLockToken" = ${lockToken}::uuid
+      `;
+    });
   }
 
-  private async handleError(tx: Prisma.TransactionClient, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, err: unknown) {
+  private async handleRefresh(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, accessToken: string, lockToken: string) {
+    const now = new Date();
+    // Update last refresh attempt (Ownership-safe)
+    await this.inTenantTransaction(tenantId, async (tx) => {
+      await tx.$executeRaw`
+        UPDATE public.social_connections
+        SET "lastRefreshAttemptAt" = ${now}::timestamp
+        WHERE id = ${conn.id}::uuid
+          AND "processingLockToken" = ${lockToken}::uuid
+      `;
+    });
+
+    const params = new URLSearchParams({
+      grant_type: 'fb_exchange_token',
+      client_id: this.config.META_APP_ID!,
+      client_secret: this.config.META_APP_SECRET!,
+      fb_exchange_token: accessToken,
+    });
+
+    const res = await fetch(`https://graph.facebook.com/${this.config.META_GRAPH_API_VERSION!}/oauth/access_token?${params}`);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(`Refresh failed: ${res.status}`), {
+        status: res.status,
+        graphErrorCode: body?.error?.code,
+        graphErrorSubcode: body?.error?.error_subcode,
+      });
+    }
+
+    const data = await res.json();
+
+    const newEncryptedToken = this.encryptToken(data.access_token);
+    const tokenExpiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
+    const nextRefreshAt = this.calculateNextRefreshAt(data.expires_in);
+
+    await this.inTenantTransaction(tenantId, async (tx) => {
+      // Prisma update with standard method where possible, but we need raw for ownership token checking easily
+      // Because we must ensure processingLockToken matches
+      await tx.$executeRaw`
+        UPDATE public.social_connections
+        SET "accessTokenEncrypted" = ${newEncryptedToken},
+            "tokenExpiresAt" = ${tokenExpiresAt}::timestamp,
+            "nextRefreshAt" = ${nextRefreshAt}::timestamp,
+            "lastRefreshSuccessAt" = ${now}::timestamp,
+            "refreshFailureCount" = 0,
+            "lastErrorAt" = NULL,
+            "lastErrorCategory" = NULL,
+            "lastErrorCode" = NULL,
+            "processingLockedUntil" = NULL,
+            "processingLockToken" = NULL
+        WHERE id = ${conn.id}::uuid
+          AND "processingLockToken" = ${lockToken}::uuid
+      `;
+    });
+  }
+
+  private async handleError(tenantId: string, conn: { id: string; status: SocialConnectionStatus; refreshFailureCount: number; accessTokenEncrypted: string | null; tokenExpiresAt: Date | null }, lockToken: string, err: unknown) {
     const classification = this.classifyMetaError(err);
     const failureCount = conn.refreshFailureCount + 1;
     const now = new Date();
@@ -181,17 +205,22 @@ export class SocialConnectionHealthProcessor {
 
     const nextRefreshAt = this.calculateCooldown(failureCount, now);
 
-    await tx.socialConnection.update({
-      where: { id: conn.id },
-      data: {
-        status: nextStatus,
-        lastErrorAt: now,
-        lastErrorCategory: classification as SocialConnectionErrorCategory,
-        refreshFailureCount: clearToken ? 0 : failureCount,
-        nextRefreshAt: clearToken ? null : nextRefreshAt,
-        accessTokenEncrypted: clearToken ? null : conn.accessTokenEncrypted,
-        tokenExpiresAt: clearToken ? null : conn.tokenExpiresAt,
-      },
+    await this.inTenantTransaction(tenantId, async (tx) => {
+      // Prisma raw update to enforce token validation securely
+      await tx.$executeRaw`
+        UPDATE public.social_connections
+        SET status = ${nextStatus}::"SocialConnectionStatus",
+            "lastErrorAt" = ${now}::timestamp,
+            "lastErrorCategory" = ${classification}::"SocialConnectionErrorCategory",
+            "refreshFailureCount" = ${clearToken ? 0 : failureCount},
+            "nextRefreshAt" = ${clearToken ? null : nextRefreshAt}::timestamp,
+            "accessTokenEncrypted" = ${clearToken ? null : conn.accessTokenEncrypted},
+            "tokenExpiresAt" = ${clearToken ? null : conn.tokenExpiresAt}::timestamp,
+            "processingLockedUntil" = NULL,
+            "processingLockToken" = NULL
+        WHERE id = ${conn.id}::uuid
+          AND "processingLockToken" = ${lockToken}::uuid
+      `;
     });
   }
 

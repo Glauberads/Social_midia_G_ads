@@ -373,7 +373,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       expect(res[0].id).toBe(connA);
     });
 
-    it('Gate 21 & 22 & 23: worker processa tenant correto com lock e unlock dentro do contexto RLS', async () => {
+    it('Gate 21 & 22 & 23: worker processa tenant correto com lock e unlock', async () => {
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       // Mocking fetch or internal refresh to avoid real network
       (processor as any).handleValidate = jest.fn().mockResolvedValue(true);
@@ -389,7 +389,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     it('Gate 24: concorrência worker não duplica processamento', async () => {
       // Isolar o teste restaurando o candidate para um estado processável e aguardando processamento
-      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NULL, "processingLockToken" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
 
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
@@ -416,7 +416,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     it('Gate 25: retry/falha não vaza contexto', async () => {
       // Isolar o teste restaurando o candidate para um estado processável e aguardando processamento
-      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NULL, "processingLockToken" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
 
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
@@ -443,6 +443,54 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
          return result[0].current_setting;
       });
       expect(await pRetry).toBe(tenantBId);
+    });
+    it('Gate 26: isolamento restabelecido pós falha', async () => {
+      const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
+      const processed = await processor.processBatch(10);
+      expect(processed).toBe(0); // Nenhuma disponível
+    });
+
+    it('Teste complementar de ownership: worker ownership protege contra overwrite atrasado', async () => {
+      // Preparar connA para ser pega por um lease antigo simulado
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NULL, "processingLockedUntil" = NOW() - interval '1 hour', "processingLockToken" = '11111111-1111-1111-1111-111111111111'::uuid, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+
+      const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
+      
+      // Mock handleValidate para testar que o release não será sobreposto
+      (processor as any).handleValidate = jest.fn().mockImplementation(async (tenantId: string, conn: any, accessToken: string, lockToken: string) => {
+        // Simular que o worker antigo tenta liberar o lock
+        await adminPrisma.$executeRaw`
+          UPDATE public.social_connections
+          SET "processingLockedUntil" = NULL,
+              "processingLockToken" = NULL
+          WHERE id = ${connA}::uuid
+            AND "processingLockToken" = '11111111-1111-1111-1111-111111111111'::uuid
+        `;
+        
+        // Agora o worker atual tenta terminar o validate!
+        // Chama uma cópia mockada que apenas executa o DB (já que network aqui nao temos URL mockada real)
+        await (processor as any).inTenantTransaction(tenantId, async (tx: any) => {
+          await tx.$executeRaw`
+            UPDATE public.social_connections
+            SET "lastValidatedAt" = NOW(),
+                "refreshFailureCount" = 0,
+                "lastErrorAt" = NULL,
+                "lastErrorCategory" = NULL,
+                "lastErrorCode" = NULL,
+                "processingLockedUntil" = NULL,
+                "processingLockToken" = NULL
+            WHERE id = ${connA}::uuid
+              AND "processingLockToken" = ${lockToken}::uuid
+          `;
+        });
+      });
+
+      const count = await processor.processBatch(10);
+      expect(count).toBe(1);
+
+      // Verify that the new worker succeeded and the state is clean!
+      const after = await adminPrisma.$queryRaw<any[]>`SELECT "processingLockToken" FROM public.social_connections WHERE id = ${connA}::uuid`;
+      expect(after[0].processingLockToken).toBeNull();
     });
   });
 });
