@@ -337,7 +337,8 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     const connA = 'e1000000-0000-0000-0000-000000000001';
     
     beforeAll(async () => {
-      await adminPrisma.$executeRaw`INSERT INTO public.social_connections ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt", "nextRefreshAt") VALUES (${connA}::uuid, ${tenantAId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdA}::uuid, NOW(), NOW(), NOW() - interval '1 day')`;
+      // Create with accessTokenEncrypted to pass early return
+      await adminPrisma.$executeRaw`INSERT INTO public.social_connections ("id", "tenantId", "provider", "status", "connectedById", "createdAt", "updatedAt", "nextRefreshAt", "accessTokenEncrypted") VALUES (${connA}::uuid, ${tenantAId}::uuid, 'META_INSTAGRAM', 'CONNECTED', ${userIdA}::uuid, NOW(), NOW(), NOW() - interval '1 day', 'enc')`;
     });
 
     it('Gate 19: social_connections respeitam RLS', async () => {
@@ -368,7 +369,11 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
 
     it('Gate 24: concorrência worker não duplica processamento', async () => {
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
+      (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
+      
+      let validateCalls = 0;
       (processor as any).handleValidate = async () => {
+        validateCalls++;
         await new Promise(r => setTimeout(r, 100)); // Hold lock artificially
       };
       
@@ -377,21 +382,41 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       
       const [r1, r2] = await Promise.all([p1, p2]);
       
-      // Either one processes 1 and the other 0, because it gets locked.
-      // But actually, both discovery might fetch the same candidate, then one acquires lock.
-      expect(r1 + r2).toBeLessThanOrEqual(2);
+      expect(validateCalls).toBe(1);
+      
+      // One of them acquires lock and processes exactly 1 candidate, the other gets 0 because lock prevents it.
+      // Wait, both might discover it simultaneously, but only one acquires lock. 
+      // The one acquiring lock processes 1, the other skips.
+      const totalProcessed = r1 + r2;
+      expect(totalProcessed).toBe(1);
     });
 
     it('Gate 25: retry/falha não vaza contexto', async () => {
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
+      (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
+      
+      // Forçar falha REAL após passar pelo lock, decryptToken, etc
       (processor as any).handleValidate = jest.fn().mockRejectedValue(new Error('FAKE_ERROR'));
       
       const count = await processor.processBatch(10);
-      expect(count).toBe(1); // It processed it, but handled error internally
+      expect(count).toBe(1); // Foi capturado pelo discovery e logou a falha internamente
+      expect((processor as any).handleValidate).toHaveBeenCalledTimes(1);
 
-      // Ensure no context leaked
-      const res = await runtimePrisma.$queryRaw<{current_setting: string}[]>`SELECT current_setting('app.tenant_id', true)`;
-      expect(res[0].current_setting).toBe('');
+      // Ensure no context leaked by running immediately a manual check without context
+      await runtimePrisma.$transaction(async (tx) => {
+        const res = await tx.$queryRaw<{current_setting: string}[]>`SELECT current_setting('app.tenant_id', true)`;
+        expect(res[0].current_setting).toBe('');
+        
+        const resUser = await tx.$queryRaw<{current_setting: string}[]>`SELECT current_setting('app.user_id', true)`;
+        expect(resUser[0].current_setting).toBe('');
+      });
+      
+      // Nova tentativa (Retry) para outro tenant ou o mesmo: garante ambiente limpo
+      const pRetry = asUser(userIdB, tenantBId, async (tx) => {
+         const result = await tx.$queryRaw<{current_setting: string}[]>`SELECT current_setting('app.tenant_id', true)`;
+         return result[0].current_setting;
+      });
+      expect(await pRetry).toBe(tenantBId);
     });
   });
 });
