@@ -99,13 +99,13 @@ SET search_path = public
 AS $$
 BEGIN
     RETURN QUERY
-    UPDATE public."OAuthState"
+    UPDATE public.oauth_states
     SET "consumedAt" = NOW()
     WHERE "stateHash" = p_state_hash
-      AND "provider" = p_provider
+      AND provider = p_provider::"SocialProvider"
       AND "consumedAt" IS NULL
       AND "expiresAt" > NOW()
-    RETURNING "OAuthState"."tenantId", "OAuthState"."userId", "OAuthState"."returnPath";
+    RETURNING "tenantId", "userId", "returnPath";
 END;
 $$;
 

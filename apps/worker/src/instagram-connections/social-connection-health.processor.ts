@@ -26,45 +26,46 @@ export class SocialConnectionHealthProcessor {
 
     for (const candidate of candidates) {
       try {
-        // Lock processing
-        const locked = await this.prisma.$executeRaw`
-          UPDATE public.social_connections
-          SET "processingLockedUntil" = now() + interval '5 minutes'
-          WHERE id = ${candidate.id}::uuid
-            AND ("processingLockedUntil" IS NULL OR "processingLockedUntil" <= now())
-        `;
-
-        if (locked === 0) continue; // locked by another worker
-
-        // We process in a tenant transaction
         await this.inTenantTransaction(candidate.tenantId, async (tx) => {
-          const conn = await tx.socialConnection.findUnique({
-            where: { id: candidate.id },
-          });
+          // Lock processing inside RLS context
+          const locked = await tx.$executeRaw`
+            UPDATE public.social_connections
+            SET "processingLockedUntil" = now() + interval '5 minutes'
+            WHERE id = ${candidate.id}::uuid
+              AND ("processingLockedUntil" IS NULL OR "processingLockedUntil" <= now())
+          `;
 
-          if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEncrypted) {
-            return;
-          }
+          if (locked === 0) return; // locked by another worker
 
-          const accessToken = this.decryptToken(conn.accessTokenEncrypted);
-          
-          // Determine if we are doing a refresh or just validation
-          // We do refresh if tokenExpiresAt is present and we are within the margin
-          const isEligibleForRefresh = conn.nextRefreshAt && conn.nextRefreshAt <= new Date();
+          try {
+            const conn = await tx.socialConnection.findUnique({
+              where: { id: candidate.id },
+            });
 
-          if (isEligibleForRefresh) {
-            await this.handleRefresh(tx, conn, accessToken);
-          } else {
-            await this.handleValidate(tx, conn, accessToken);
+            if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEncrypted) {
+              return;
+            }
+
+            const accessToken = this.decryptToken(conn.accessTokenEncrypted);
+            
+            // Determine if we are doing a refresh or just validation
+            // We do refresh if tokenExpiresAt is present and we are within the margin
+            const isEligibleForRefresh = conn.nextRefreshAt && conn.nextRefreshAt <= new Date();
+
+            if (isEligibleForRefresh) {
+              await this.handleRefresh(tx, conn, accessToken);
+            } else {
+              await this.handleValidate(tx, conn, accessToken);
+            }
+          } finally {
+            // Release processing lock inside RLS context
+            await tx.$executeRaw`
+              UPDATE public.social_connections
+              SET "processingLockedUntil" = NULL
+              WHERE id = ${candidate.id}::uuid
+            `;
           }
         });
-
-        // Release processing lock
-        await this.prisma.$executeRaw`
-          UPDATE public.social_connections
-          SET "processingLockedUntil" = NULL
-          WHERE id = ${candidate.id}::uuid
-        `;
 
         processedCount++;
       } catch (err) {
