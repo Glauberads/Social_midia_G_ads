@@ -39,6 +39,7 @@ COPY --from=installer --chown=nestjs:nodejs /app/node_modules ./node_modules
 # Copy database package
 COPY --from=installer --chown=nestjs:nodejs /app/packages/database/node_modules ./packages/database/node_modules
 COPY --from=installer --chown=nestjs:nodejs /app/packages/database/package.json ./packages/database/package.json
+COPY --from=installer --chown=nestjs:nodejs /app/packages/database/dist ./packages/database/dist
 
 # Copy api package
 COPY --from=installer --chown=nestjs:nodejs /app/apps/api/node_modules ./apps/api/node_modules

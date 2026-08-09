@@ -1,11 +1,12 @@
 {
     "name": "@projeto/database",
     "version": "1.0.0",
-    "main": "index.ts",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
     "scripts": {
         "prisma:generate": "prisma generate",
         "prisma:validate": "prisma validate",
-        "build": "echo 'Database built'",
+        "build": "tsc -p tsconfig.json",
         "lint": "echo 'Database linted'",
         "typecheck": "tsc --noEmit",
         "test": "jest",

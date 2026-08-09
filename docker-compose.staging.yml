@@ -59,6 +59,8 @@ services:
       - traefik_network
     env_file:
       - .env.staging
+    environment:
+      PORT: 3001
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health/live"]

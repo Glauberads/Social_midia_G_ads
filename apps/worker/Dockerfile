@@ -35,6 +35,7 @@ COPY --from=installer --chown=worker:nodejs /app/node_modules ./node_modules
 # Copy database package
 COPY --from=installer --chown=worker:nodejs /app/packages/database/node_modules ./packages/database/node_modules
 COPY --from=installer --chown=worker:nodejs /app/packages/database/package.json ./packages/database/package.json
+COPY --from=installer --chown=worker:nodejs /app/packages/database/dist ./packages/database/dist
 
 # Copy worker package
 COPY --from=installer --chown=worker:nodejs /app/apps/worker/node_modules ./apps/worker/node_modules
