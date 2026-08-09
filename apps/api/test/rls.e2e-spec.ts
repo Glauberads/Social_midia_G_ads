@@ -60,12 +60,14 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.get_due_content_schedules_candidates(BIGINT) TO ${e2eRole}`);
     await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.get_social_connection_health_candidates(BIGINT) TO ${e2eRole}`);
     await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.consume_oauth_state(TEXT, TEXT) TO ${e2eRole}`);
+    await adminPrisma.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.is_tenant_member() TO ${e2eRole}`);
 
     // Revoke from public just in case
     await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.resolve_tenant_membership(UUID, UUID) FROM PUBLIC`);
     await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.get_due_content_schedules_candidates(BIGINT) FROM PUBLIC`);
     await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.get_social_connection_health_candidates(BIGINT) FROM PUBLIC`);
     await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.consume_oauth_state(TEXT, TEXT) FROM PUBLIC`);
+    await adminPrisma.$executeRawUnsafe(`REVOKE EXECUTE ON FUNCTION public.is_tenant_member() FROM PUBLIC`);
 
     // Connect runtimePrisma physically as social_elite_runtime
     const url = new URL(process.env.DATABASE_URL!);
@@ -157,7 +159,7 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
   });
 
   describe('RUNTIME CONNECTION & ROLE ATTRIBUTES', () => {
-    it('Gate 26: role continua NOBYPASSRLS durante a suite', async () => {
+    it('Gate 26: role continua NOBYPASSRLS durante a suite e maintains strict execution privileges', async () => {
       const userRes = await runtimePrisma.$queryRaw<{current_user: string}[]>`SELECT current_user`;
       expect(userRes[0].current_user).toBe('social_elite_runtime');
       
@@ -167,6 +169,12 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
       expect(roleRes[0].rolcreatedb).toBe(false);
       expect(roleRes[0].rolcreaterole).toBe(false);
       expect(roleRes[0].rolreplication).toBe(false);
+
+      const priv1 = await adminPrisma.$queryRaw<any[]>`SELECT has_function_privilege('social_elite_runtime', 'public.is_tenant_member()', 'EXECUTE') as has_privilege`;
+      expect(priv1[0].has_privilege).toBe(true);
+
+      const priv2 = await adminPrisma.$queryRaw<any[]>`SELECT has_function_privilege('public', 'public.is_tenant_member()', 'EXECUTE') as has_privilege`;
+      expect(priv2[0].has_privilege).toBe(false);
     });
   });
 
@@ -380,6 +388,9 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     });
 
     it('Gate 24: concorrência worker não duplica processamento', async () => {
+      // Isolar o teste restaurando o candidate para um estado processável e aguardando processamento
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NOW() - interval '1 day', "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
       
@@ -404,6 +415,9 @@ describe('RLS Physical Tests (Direct Database Tests)', () => {
     });
 
     it('Gate 25: retry/falha não vaza contexto', async () => {
+      // Isolar o teste restaurando o candidate para um estado processável e aguardando processamento
+      await adminPrisma.$executeRaw`UPDATE public.social_connections SET "nextRefreshAt" = NOW() - interval '1 day', "processingLockedUntil" = NULL, "refreshFailureCount" = 0 WHERE id = ${connA}::uuid`;
+
       const processor = new SocialConnectionHealthProcessor(runtimePrisma as any);
       (processor as any).decryptToken = jest.fn().mockReturnValue('fake-token');
       
